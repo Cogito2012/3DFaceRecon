@@ -7,6 +7,10 @@ dataset_path = '../../data/VGGFace/vgg_face_dataset';
 images_path = fullfile(dataset_path, 'images');
 srcfiles_path = fullfile(dataset_path, 'files');
 % prepare output paths
+faces_path = fullfile(dataset_path, 'face_images');
+if ~exist(faces_path, 'dir')
+    mkdir(faces_path);
+end
 pnccs_path = fullfile(dataset_path, 'pnccs');
 if ~exist(pnccs_path, 'dir')
     mkdir(pnccs_path);
@@ -49,9 +53,16 @@ subjects = dir(images_path);
 subjects = subjects(3:end);
 for i=1:length(subjects)
     subj_name = subjects(i).name;
+%     if ~strcmp(subj_name, 'Ana_Ivanovic')
+%         continue;
+%     end
     labelfile = fullfile(srcfiles_path, [subj_name, '.txt']);
     all_labels = parse_vggface_labels(labelfile);
     % prepare subjects' folder
+    faces_subj_path = fullfile(faces_path, subj_name);
+    if ~exist(faces_subj_path, 'dir')
+        mkdir(faces_subj_path);
+    end
     pnccs_subj_path = fullfile(pnccs_path, subj_name);
     if ~exist(pnccs_subj_path, 'dir')
         mkdir(pnccs_subj_path);
@@ -92,6 +103,8 @@ for i=1:length(subjects)
         [ pose_param, shape_param, exp_param ] = get_random_params( im_size, num_shape_param, num_exp_param, beta);
         [pncc, masked_img] = Project2D(mu, w, w_exp, tri, vertex_code, im_face, pose_param, shape_param, exp_param);
         % save results
+        faceim_file = fullfile(faces_subj_path, [imgID,'.jpg']);
+        imwrite(im_face, faceim_file);
         pncc_file = fullfile(pnccs_subj_path, [imgID,'.jpg']);
         imwrite(pncc, pncc_file);
         maskim_file = fullfile(maskims_subj_path, [imgID,'.jpg']);

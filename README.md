@@ -10,10 +10,13 @@ python download_vggface.py ./vgg_face_dataset/files
 
 Samples of current data preparation results are structured as the folder `./samples`:
 
+![FACE](./samples/face_images/Ana_Ivanovic/0000002.jpg)
 ![PNCC](./samples/pnccs/Ana_Ivanovic/00000002.jpg)
-![PNCC](./samples/mask_images/Ana_Ivanovic/00000002.jpg)
+![MASK](./samples/mask_images/Ana_Ivanovic/00000002.jpg)
+
+![FACE](./samples/face_images/Ana_Ivanovic/00000045.jpg)
 ![PNCC](./samples/pnccs/Ana_Ivanovic/00000045.jpg)
-![PNCC](./samples/mask_images/Ana_Ivanovic/00000045.jpg)
+![MASK](./samples/mask_images/Ana_Ivanovic/00000045.jpg)
 
 The 235-dimensional param vecters are saved in the `labels` folder.
 7-dim for pose parameters ([phi; gamma; theta; t3d_x; t3d_y; t3d_z; focal_factor];)
