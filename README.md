@@ -10,11 +10,9 @@ python download_vggface.py ./vgg_face_dataset/files
 
 Samples of current data preparation results are structured as the folder `./samples`:
 
-![FACE](./samples/face_images/Ana_Ivanovic/0000002.jpg)
 ![PNCC](./samples/pnccs/Ana_Ivanovic/00000002.jpg)
 ![MASK](./samples/mask_images/Ana_Ivanovic/00000002.jpg)
 
-![FACE](./samples/face_images/Ana_Ivanovic/00000045.jpg)
 ![PNCC](./samples/pnccs/Ana_Ivanovic/00000045.jpg)
 ![MASK](./samples/mask_images/Ana_Ivanovic/00000045.jpg)
 
