@@ -1,2 +1,6 @@
 3dmm/*
 .idea/
+nets/*.pyc
+mesh_render/build
+mesh_render/*.so
+mesh_render/*.pyc

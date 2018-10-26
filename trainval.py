@@ -4,7 +4,10 @@ import time
 import os
 import logging
 import argparse
+import utils.parser_3dmm as parser_3dmm
 ROOT_PATH = os.path.dirname(__file__)
+
+
 
 
 def train():
@@ -15,24 +18,31 @@ def train():
         if os.path.exists(checkpoints_dir):
             os.makedirs(checkpoints_dir)
 
+    # read basic params from 3dmm facial model
+    modeldata_3dmm = parser_3dmm.read_3dmm_model()
+    ndim_params = modeldata_3dmm['ndim_pose'] + modeldata_3dmm['ndim_shape'] + modeldata_3dmm['ndim_exp']
+
     graph = tf.Graph()
     with graph.as_default():
         # Set the random seed for tensorflow
         tf.set_random_seed(12345)
 
-        grayimg_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.image_size, p.image_size], name='im_gray')
-        pncc_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.image_size, p.image_size, 3], name='im_pncc')
-        normal_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.image_size, p.image_size, 3], name='im_normal')
+        grayimg_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, p.image_size, p.image_size, 1], name='im_gray')
+        labels_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, ndim_params], name='im_gray')
         # initialize SalCNN Model
         face_recnet = FaceRecNet(
             im_gray=grayimg_placeholder,
-            im_pncc=pncc_placeholder,
-            im_normal=None,
+            params_label=labels_placeholder,
+            modeldata_3dmm=modeldata_3dmm,
             nIter=p.nIter,
             batch_size=p.batch_size,
-            im_size=p.image_size
+            im_size=p.image_size,
+            weight_decay=1e-4
         )
-        face_recnet.build()
+        pred_depth_map = face_recnet.build()
+        loss = face_recnet.get_loss()
+
+
 
     tfconfig = tf.ConfigProto(allow_soft_placement=True)
     tfconfig.gpu_options.allow_growth = True
