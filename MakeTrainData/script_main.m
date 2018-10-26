@@ -7,27 +7,24 @@ dataset_path = '../../data/VGGFace/vgg_face_dataset';
 images_path = fullfile(dataset_path, 'images');
 srcfiles_path = fullfile(dataset_path, 'files');
 % prepare output paths
+output_path = '../../data/VGGFace/train';
 faces_path = fullfile(dataset_path, 'face_images');
 if ~exist(faces_path, 'dir')
     mkdir(faces_path);
 end
-pnccs_path = fullfile(dataset_path, 'pnccs');
+pnccs_path = fullfile(output_path, 'pnccs');
 if ~exist(pnccs_path, 'dir')
     mkdir(pnccs_path);
 end
-maskims_path = fullfile(dataset_path, 'mask_images');
+maskims_path = fullfile(output_path, 'mask_images');
 if ~exist(maskims_path, 'dir')
     mkdir(maskims_path);
 end
-labels_path = fullfile(dataset_path, 'labels');
+labels_path = fullfile(output_path, 'labels');
 if ~exist(labels_path, 'dir')
     mkdir(labels_path);
 end
-depths_path = fullfile(dataset_path, 'depth');
-if ~exist(depths_path, 'dir')
-    mkdir(depths_path);
-end
-list_file_id = fopen(fullfile(dataset_path, 'filelist.txt'), 'w');
+list_file_id = fopen(fullfile(output_path, 'filelist.txt'), 'w');
 im_size = 200;
 beta = 0.7;
 %% load morphable models
@@ -47,17 +44,25 @@ num_shape_param = size(w, 2);
 num_exp_param = size(w_exp, 2);
 mu = mu_shape + mu_exp;
 
-
+%% open the parallel environment
+tic
+pool = start_matlabpool(4);
+toc
 %%
 subjects = dir(images_path);
 subjects = subjects(3:end);
-for i=1:length(subjects)
+num_subjects = length(subjects);
+for i=1:num_subjects
     subj_name = subjects(i).name;
-%     if ~strcmp(subj_name, 'Ana_Ivanovic')
+%     if ~strcmp(subj_name, 'Abel_Ferrara')
 %         continue;
 %     end
     labelfile = fullfile(srcfiles_path, [subj_name, '.txt']);
-    all_labels = parse_vggface_labels(labelfile);
+    try 
+        all_labels = parse_vggface_labels(labelfile);
+    catch
+        continue;
+    end
     % prepare subjects' folder
     faces_subj_path = fullfile(faces_path, subj_name);
     if ~exist(faces_subj_path, 'dir')
@@ -75,25 +80,22 @@ for i=1:length(subjects)
     if ~exist(labels_subj_path, 'dir')
         mkdir(labels_subj_path);
     end
-    depths_subj_path = fullfile(depths_path, subj_name);
-    if ~exist(depths_subj_path, 'dir')
-        mkdir(depths_subj_path);
-    end
     % processing images for each subject
     all_images = dir(fullfile(images_path, subj_name, '*.jpg'));
-    for j=1:length(all_images)
-        if all_images(j).bytes < 1000
-            continue;
-        end
-        try
-            im = imread(fullfile(images_path, subj_name, all_images(j).name));
-            [height, width, ~] = size(im);
-        catch
-            continue
-        end
-        fprintf('Processing image: %s (%s)...\n', all_images(j).name, subj_name);
+    fprintf('Processing images of subject:%s (Total: %d)...', subj_name, length(all_images));
+    tic
+    parfor j=1:length(all_images)
+        imgfile = fullfile(images_path, subj_name, all_images(j).name);
+        imgbytes = all_images(j).bytes;
+        [im, msg] = read_image_file(imgfile, imgbytes);
+        if ~msg, continue; end
+        [height, width, nchannels] = size(im);
         % find the labels for current image
         imgID = all_images(j).name(1:end-4);
+%         disp([num2str(j), ': ', imgID])
+%         if ~strcmp(imgID, '00000873')
+%             continue;
+%         end
         idx = find(strcmp(all_labels.imgIDs, imgID));
         rectbox = all_labels.rectbox{idx};
         rectbox = check_box(rectbox, height, width);
@@ -121,7 +123,25 @@ for i=1:length(subjects)
             fprintf(f, '%.6f\n', exp_param(k));
         end
         fclose(f);
+%         fprintf(list_file_id, '%s/%s\n', subj_name, imgID);
+    end
+    t = toc;
+    fprintf('Time: %d seconds.\n', t);
+end
+close_matlabpool;
+
+%% We seperately write the list file here is due to the parallel processing above.
+valid_data = dir(labels_path);
+valid_data = valid_data(3:end);
+for i=1:length(valid_data)
+    subj_name = valid_data(i).name;
+    all_labels = dir(fullfile(labels_path, subj_name, '*.txt'));
+    for j=1:length(all_labels)
+        imgID = all_labels(j).name;
         fprintf(list_file_id, '%s/%s\n', subj_name, imgID);
     end
 end
 fclose(list_file_id);
+
+
+
