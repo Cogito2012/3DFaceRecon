@@ -1,10 +1,14 @@
 import tensorflow as tf
+# from nets.network import FaceRecNet
 from nets.network import FaceRecNet
 import time
 import os
 import logging
 import argparse
 import utils.parser_3dmm as parser_3dmm
+import scipy.io as sio
+import numpy as np
+
 ROOT_PATH = os.path.dirname(__file__)
 
 
@@ -19,8 +23,9 @@ def train():
             os.makedirs(checkpoints_dir)
 
     # read basic params from 3dmm facial model
-    modeldata_3dmm = parser_3dmm.read_3dmm_model()
-    ndim_params = modeldata_3dmm['ndim_pose'] + modeldata_3dmm['ndim_shape'] + modeldata_3dmm['ndim_exp']
+    mesh_data_path = os.path.join(ROOT_PATH, '3dmm')
+    mesh_data_3dmm = parser_3dmm.read_3dmm_model(mesh_data_path)
+    ndim_params = mesh_data_3dmm['ndim_pose'] + mesh_data_3dmm['ndim_shape'] + mesh_data_3dmm['ndim_exp']
 
     graph = tf.Graph()
     with graph.as_default():
@@ -33,7 +38,7 @@ def train():
         face_recnet = FaceRecNet(
             im_gray=grayimg_placeholder,
             params_label=labels_placeholder,
-            modeldata_3dmm=modeldata_3dmm,
+            mesh_data=mesh_data_3dmm,
             nIter=p.nIter,
             batch_size=p.batch_size,
             im_size=p.image_size,
@@ -42,7 +47,7 @@ def train():
         pred_depth_map = face_recnet.build()
         loss = face_recnet.get_loss()
 
-
+    print('===============================')
 
     tfconfig = tf.ConfigProto(allow_soft_placement=True)
     tfconfig.gpu_options.allow_growth = True
