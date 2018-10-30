@@ -7,7 +7,7 @@ from tensorflow.contrib.slim import arg_scope
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
 from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
 
-from rendering_layer.ops import render_depth
+# from rendering_layer.ops import render_depth
 
 class FaceRecNet:
     def __init__(self, im_gray=None, params_label=None, mesh_data=None, nIter=4, batch_size=64, im_size=200, weight_decay=1e-4):
@@ -153,7 +153,9 @@ class FaceRecNet:
         pncc_batch = tf.clip_by_value(tf_tex, 0.0, 1.0)
         # normal map result
         mag = tf.reduce_sum(tf.square(tf_normal), axis=-1)
-        zero_ind = tf.where(mag == 0)
+        zero_ind = tf.where(tf.equal())
+
+
         ################### TODO #######################
         mask = tf.minimum(tf.maximum(tf_depth, 0.0), 1.0)  # (B, H, W, 1)
         maskimg_batch = mask * self.im_gray
