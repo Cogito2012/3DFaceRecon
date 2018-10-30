@@ -79,6 +79,7 @@ def main():
     vertex_code = modeldata_3dmm['vertex']
     tri = modeldata_3dmm['tri']
     mu = modeldata_3dmm['mu']  # (3*Nvert, 1)
+    mu_tex = modeldata_3dmm['mu_tex']  # (3, Nvert)
     pc_shape = modeldata_3dmm['pc_shape']  # (3*Nvert, ndim_shape)
     pc_exp = modeldata_3dmm['pc_exp']  # (3*Nvert, ndim_exp)
     ndim_shape = modeldata_3dmm['ndim_shape']
@@ -106,18 +107,22 @@ def main():
     # for pncc map
     vertex_proj = vertex_proj.astype(np.float32)
     tri = tri.astype(np.float32)
-    texture = vertex_code.astype(np.float32)
-    
+    pncc_code = vertex_code.astype(np.float32)
+    abedo_code = mu_tex.astype(np.float32)
 
     with tf.device("/device:%s:0"%(device)):
         tf_vertex = tf.Variable(tf.constant(np.expand_dims(vertex_proj,axis=0)))
         tf_triangles = tf.Variable(tf.constant(tri))
-        tf_texture = tf.Variable(tf.constant(np.expand_dims(texture,axis=0)))
+        tf_tex_pncc = tf.Variable(tf.constant(np.expand_dims(pncc_code,axis=0)))
+        tf_tex_abedo = tf.Variable(tf.constant(np.expand_dims(abedo_code,axis=0)))
         tf_image =tf.Variable(tf.constant(np.expand_dims(im.astype(np.float32)/255.0,axis=0)))
 
         t_start = time.time()
-        tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex,tri=tf_triangles,texture = tf_texture,image=tf_image)
+        tf_depth, tf_pncc, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex,tri=tf_triangles,texture = tf_tex_pncc,image=tf_image)
         t_graph = time.time() - t_start
+
+        tf_depth, tf_abedo, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_tex_abedo,
+                                                               image=tf_image)
 
         # must init the vertex and tri before depth.eval()
         init_g = tf.global_variables_initializer()
@@ -128,13 +133,14 @@ def main():
             sess.run(init_l)
 
             t_start = time.time()
-            tf_depth_value,tf_tex_value, tf_normal, tf_tri_ind_value = sess.run([tf_depth, tf_tex, tf_normal, tf_tri_ind])
+            tf_depth_value,tf_pncc_value, tf_normal, tf_abedo_value, tf_tri_ind_value = sess.run([tf_depth, tf_pncc, tf_normal, tf_abedo, tf_tri_ind])
             t_run = time.time() - t_start
 
             # code_map (PNCC), depth_buffer (depth image), normal_map
             depth_buffer = tf_depth_value[0, :, :, 0]
-            code_map = tf_tex_value[0, :, :, :]
+            pncc_map = np.clip(tf_pncc_value[0, :, :, :], 0.0, 1.0) * 255.0
             normal_map = tf_normal[0, :, :, :]
+            abedo_map = np.maximum(tf_abedo_value[0, :, :, :], 0.0)
 
     # binarization for masking
     mask = np.minimum(np.maximum(depth_buffer, 0.0), 1.0)
@@ -145,17 +151,20 @@ def main():
     depthimg = (depth_buffer - np.min(depth_buffer[ind]))/(np.max(depth_buffer[ind]) - np.min(depth_buffer[ind]))
     depthimg = np.maximum(depthimg, 0.0)*255.0
     # normal image
-    mag_map = np.sum(normal_map**2, axis=2)  #(H, W)
-    zero_ind = (mag_map == 0)
-    mag_map[zero_ind] = 1.0
-    normal_map[zero_ind] = 0.0
+    mag_map = np.sum(normal_map**2, axis=2) + 1.0  #(H, W)
+    # zero_ind = (mag_map == 0)
+    # mag_map[zero_ind] = 1.0
+    # normal_map[np.where(normal_map < 0)] = 0.0
     normal_map = normal_map /np.expand_dims(np.sqrt(mag_map), axis=2)
+    normal_map = np.maximum(normal_map, 0.0)
     normalimg = (normal_map - np.min(normal_map))/(np.max(normal_map) - np.min(normal_map)) * 255.0
     
-    imsave('test_pncc_tf_%s.png'%(device),np.round(np.clip(code_map,0.0,1.0) * 255.0).astype(np.uint8))
+    # imsave('test_pncc_tf_%s.png'%(device),np.round(np.clip(pncc_map,0.0,1.0) * 255.0).astype(np.uint8))
+    imsave('test_pncc_tf_%s.png' % (device), np.round(pncc_map).astype(np.uint8))
     imsave('test_maskimg_tf_%s.png'%(device),np.round(maskimg).astype(np.uint8))
     imsave('test_depthimg_tf_%s.png'%(device), np.round(depthimg).astype(np.uint8))
     imsave('test_normalimg_tf_%s.png'%(device), np.round(normalimg).astype(np.uint8))
+    imsave('test_abedoimg_tf_%s.png' % (device), np.round(abedo_map).astype(np.uint8))
 
     print('Op time: {} s, Running time: {} s.'.format(t_graph, t_run))
 

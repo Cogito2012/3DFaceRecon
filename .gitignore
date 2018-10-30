@@ -14,4 +14,7 @@ rendering_layer/ops_src/*.o
 rendering_layer/ops_src/*.bk
 
 zbuffer_render/
+data/*
+
+temp.py
 

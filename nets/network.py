@@ -7,7 +7,7 @@ from tensorflow.contrib.slim import arg_scope
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
 from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
 
-# from rendering_layer.ops import render_depth
+from rendering_layer.ops import render_depth
 
 class FaceRecNet:
     def __init__(self, im_gray=None, params_label=None, mesh_data=None, nIter=4, batch_size=64, im_size=200, weight_decay=1e-4):
@@ -17,6 +17,10 @@ class FaceRecNet:
         self.batch_size = batch_size
         self.im_size = im_size
         self.weight_decay = weight_decay
+        self.ndim_tex = 10
+        self.lambda_sh = 1.0
+        self.lambda_f = 5e-3
+        self.lambda_sm = 1.0
 
         # mesh data
         self.vertex_code = mesh_data['vertex']
@@ -24,6 +28,10 @@ class FaceRecNet:
         self.mu = tf.constant(mesh_data['mu'], dtype=tf.float32)  # (3*Nvert, 1)
         self.pc_shape = tf.constant(mesh_data['pc_shape'], dtype=tf.float32)  # (3*Nvert, ndim_shape)
         self.pc_exp = tf.constant(mesh_data['pc_exp'], dtype=tf.float32)      # (3*Nvert, ndim_exp)
+        self.mu_tex = tf.constant(mesh_data['mu_tex'], dtype=tf.float32)  # (3, Nvert)
+        self.pc_tex = tf.constant(mesh_data['pc_tex'][:, 0:self.ndim_tex], dtype=tf.float32)  # (3*Nvert, ndim_tex)
+        self.param_tex = tf.constant(mesh_data['param_tex'][0:self.ndim_tex, :])
+        # self.lighting = tf.constant([0.2, 0, 0.98], dtype=tf.float32) # the first-order spherical harmonics coefficients
 
         # mesh info
         self.ndim_shape = mesh_data['ndim_shape']
@@ -58,12 +66,14 @@ class FaceRecNet:
                             trainable=is_training):
             # CoarseNet
             self.build_coarse_net()
-            self.summaries.update({'pncc': self.pncc_batch,
-                                   'maskimg': self.maskimg_batch,
+            self.summaries.update({
                                    'pred_params': self.pred_params})
             # Rendering Layer
             self.depth_rendering_layer()
-            self.summaries.update({'coarse_depth': self.coarse_depth_map})
+            self.summaries.update({'pncc_map': self.pncc_batch,
+                                   'mask_im': self.maskimg_batch,
+                                   'normal_map': self.normal_batch,
+                                   'coarse_depth': self.coarse_depth_map})
 
             # FineNet
             self.build_fine_net()
@@ -82,13 +92,16 @@ class FaceRecNet:
         for n in range(self.nIter):
             scope_name = 'Input_Rendering_iter%d'%(n)
             with tf.variable_scope(scope_name, scope_name):
-                # transforming the predicted params into rendered PNCC, normal map and Masked Image
-                self.pncc_batch, self.normal_batch, self.maskimg_batch, _ = self.rendering_layer(self.pred_params)
+                # transforming the predicted params into vertices
+                vertices_proj = self.vertices_transform(self.pred_params)
+                # rendered PNCC, normal map and Masked Image
+                pncc_batch, normal_batch, maskimg_batch, _ = \
+                    self.rendering_layer(vertices_proj, self.tri, self.vertex_code)
 
             scope_name = 'CoarseNet_iter_iter%d'%(n)
             with tf.variable_scope(scope_name, scope_name):
-                # shape: [batch_size, height, width, channels], channels = 4
-                net_input = tf.concat([self.maskimg_batch, self.pncc_batch], axis=3, name='input_data')
+                # shape: [batch_size, height, width, channels], channels = 7
+                net_input = tf.concat([maskimg_batch, pncc_batch, normal_batch], axis=3, name='input_data')
                 # CoarseNet
                 net_conv = slim.conv2d(net_input, 32, [7, 7], stride=2, scope='conv1')
                 res_blocks = [resnet_v1_block('block1', base_depth=32, num_units=2, stride=1),
@@ -104,7 +117,7 @@ class FaceRecNet:
                                      activation_fn=None, scope='pred_params')
 
 
-    def rendering_layer(self, pred_params):
+    def vertices_transform(self, pred_params):
         # parse geometry and pose parameters from prediction
         pose_params = tf.slice(pred_params, [0, 0], [-1, self.ndim_pose], name='pred_pose_params')  # (B, ndim_pose)
         shape_params = tf.slice(pred_params, [0, self.ndim_pose], [-1, self.ndim_shape], name='pred_shape_params')  # (B, ndim_shape)
@@ -134,61 +147,41 @@ class FaceRecNet:
                                  self.im_size - tf.slice(vertex_proj, [0, 1, 0], [-1, 1, -1]) - 1,
                                  tf.slice(vertex_proj, [0, 2, 0], [-1, 1, -1])], axis=1)  #(B, 3, N)
 
-        # start rendering with z_buffer renderer
-        pncc_batch, normal_batch, maskimg_batch, depthimg_batch = self.zbuffer_rendering_tf(vertex_proj)
-
-        return pncc_batch, normal_batch, maskimg_batch, depthimg_batch
+        return vertex_proj
 
 
-    def zbuffer_rendering_tf(self, vertex_proj):
+    def rendering_layer(self, vertex_proj, triangles, colors):
 
         #prepare vertices, triangles, and texture       
         tf_vertex = tf.to_float(vertex_proj, name='vertices')  # (B, 3, N)
-        tf_triangles = tf.constant(self.tri, tf.float32, name='triangles')  # (3, N)
-        tf_texture = tf.tile(tf.expand_dims(tf.constant(self.vertex_code, tf.float32), axis=0), [self.batch_size, 1, 1], name='texture')  # (B, 3, N)
+        tf_triangles = tf.constant(triangles, tf.float32, name='triangles')  # (3, N)
+        tf_texture = tf.tile(tf.expand_dims(tf.constant(colors, tf.float32), axis=0), [self.batch_size, 1, 1], name='texture')  # (B, 3, N)
         # call TF rendering layer
         tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=self.im_gray)
         
-        # pncc result
+        # 1. pncc result
         pncc_batch = tf.clip_by_value(tf_tex, 0.0, 1.0)
-        # normal map result
-        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1)
-        zero_ind = tf.where(tf.equal())
 
+        # 2. normal map result
+        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
+        normal_map = tf.maximum(tf_normal, 0.0)  # if v <0, v == 0
+        normal_map = normal_map / tf.tile(tf.expand_dims(tf.sqrt(mag), axis=3), [1, 1, 1, 3])  # normalize vertices normals
+        normal_batch = tf.map_fn(lambda x: (x - tf.reduce_min(x, axis=[0, 1])) /
+                                           (tf.reduce_max(x, axis=[0, 1]) - tf.reduce_min(x, axis=[0, 1])), normal_map, dtype=tf.float32)
+        normalimg_batch = tf.map_fn(lambda x: tf.maximum(x, 0.0) * 255.0, normal_batch, dtype=tf.float32)
 
-        ################### TODO #######################
+        # 3. masked image result
         mask = tf.minimum(tf.maximum(tf_depth, 0.0), 1.0)  # (B, H, W, 1)
         maskimg_batch = mask * self.im_gray
-        
+
+        # 4. depth image result
         tf_depth = tf.squeeze(tf_depth)  # (B, H, W)
         foreground = tf.map_fn(lambda x: tf.gather_nd(x, tf.where(x > 0.0)), tf_depth, dtype=tf.float32)
         tf_depth_norm = tf.map_fn(lambda x: (x[0] - tf.reduce_min(x[1])) / (tf.reduce_max(x[1]) - tf.reduce_min(x[1])), (tf_depth, foreground), dtype=tf.float32)
         depthimg_batch = tf.map_fn(lambda x: tf.maximum(x, 0.0)*255.0, tf_depth_norm, dtype=tf.float32)
         depthimg_batch = tf.expand_dims(depthimg_batch, axis=3)  # (B, H, W, 1)
 
-        return pncc_batch, maskimg_batch, depthimg_batch
-
-
-    def zbuffer_rendering_py(self, vertices_proj):
-        pncc_batch = np.zeros((self.batch_size, self.im_size, self.im_size, 3), dtype=np.float32)
-        maskimg_batch = np.zeros((self.batch_size, self.im_size, self.im_size, 1), dtype=np.float32)
-        for i in range(self.batch_size):
-            code_map = pncc_batch[i, :, :, :].copy()
-            depth_buffer = np.zeros([self.im_size, self.im_size], dtype=np.float32, order='C') - 999999.
-            # We use the Cython package based on C++ implementation
-            mesh_core_cython.render_colors_core(
-                code_map, vertices_proj, self.tri, self.vertex_code,
-                depth_buffer,
-                vertices_proj.shape[0], self.tri.shape[0],
-                self.im_size, self.im_size, 3)
-            # binarization for masking
-            mask = np.minimum(np.maximum(depth_buffer, 0.0), 1.0)
-            maskimg = tf.expand_dims(mask, axis=2) * self.im_gray[i]
-            pncc_batch[i, :, :, :] = code_map
-            maskimg_batch[i, :, :, :] = maskimg
-
-        return pncc_batch, maskimg_batch
-
+        return pncc_batch, normalimg_batch, maskimg_batch, depthimg_batch
 
 
     def projection_equation(self, f, R, vertex, t3d):
@@ -257,8 +250,10 @@ class FaceRecNet:
         # Rendering Layer
         scope_name = 'Rendering_Layer'
         with tf.variable_scope(scope_name, scope_name):
-                # transforming the predicted params into depth image
-                _,_, self.coarse_depth_map = self.rendering_layer(self.pred_params)
+            # transforming the predicted params into depth image
+            self.vertices_proj = self.vertices_transform(self.pred_params)
+            self.pncc_batch, self.normal_batch, self.maskimg_batch, self.coarse_depth_map = \
+                self.rendering_layer(self.vertices_proj, self.tri, self.vertex_code)
         return self.coarse_depth_map
 
 
@@ -288,7 +283,10 @@ class FaceRecNet:
 
 
     def get_loss(self):
-        #
+        ''' Construct loss functions
+
+        :return:
+        '''
         with tf.variable_scope('Loss'):
             # pose loss (MSE)
             pose_pred = tf.slice(self.pred_params, [0, 0], [-1, self.ndim_pose], name='pose_pred')  # (batchsize, ndim_pose)
@@ -306,16 +304,24 @@ class FaceRecNet:
             self.summaries.update({'geometry_loss': loss_geometry})
 
             # Shape from Shading (SfS) loss
-            # TODO
+            intensity_recover = self.get_spherical_harmonics_model()
+            loss_sh = tf.losses.mean_squared_error(self.im_gray, intensity_recover, scope='spherical_harmonics_loss')
+            self.summaries.update({'spherical_harmonics_loss': loss_sh})
 
             # fidelity loss of depth map
             loss_fidelity = tf.losses.mean_squared_error(self.coarse_depth_map, self.pred_depth_map, scope='fidelity_loss')
-            self.summaries.update({'fidelity_loss': loss_fidelity})            
-            
+            self.summaries.update({'fidelity_loss': loss_fidelity})
+
             # smoothness loss of depth map
             filtered_depth = tf.map_fn(lambda x: self.laplace_transform(x), tf.squeeze(self.pred_depth_map), dtype=tf.float32, name='laplacian_smoothing')
             loss_smooth = tf.contrib.layers.l1_regularizer(1.0)(filtered_depth)
             self.summaries.update({'smoothness_loss': loss_smooth})
+
+            # final loss function
+            loss = self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
+            self.summaries.update({'total_loss', loss})
+
+            return loss
 
     
     def laplace_transform(self, x):
@@ -331,6 +337,66 @@ class FaceRecNet:
         
         return y[0, :, :, 0]
 
+    def compute_abedo_image(self, vertices, triangles, abedos):
+        ''' transform the abedos into abedo image format
+
+        :param vertices:
+        :param triangles:
+        :param abedos:  (3, N)
+        :return:
+        '''
+        # prepare vertices, triangles, and texture
+        tf_vertex = tf.to_float(vertices, name='vertices')  # (B, 3, N)
+        tf_triangles = tf.constant(triangles, tf.float32, name='triangles')  # (3, N)
+        tf_texture = tf.tile(tf.expand_dims(abedos, axis=0), [self.batch_size, 1, 1], name='texture')  # (B, 3, N)
+        # call TF rendering layer
+        _, tf_abedo, tf_normal, _ = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=self.im_gray)
+
+        abedos_image = tf.reduce_mean(tf.maximum(tf_abedo, 0.0), axis=-1, keep_dims=True)  # (B, H, W, 1)
+        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
+        normal_map = tf.maximum(tf_normal, 0.0)  # if v <0, v == 0
+        normal_map = normal_map / tf.tile(tf.expand_dims(tf.sqrt(mag), axis=3), [1, 1, 1, 3])  # normalize vertices normals
+
+        return abedos_image, normal_map
 
 
+    def get_spherical_harmonics_model(self):
 
+        # transform the (3, N) mu_tex into image shape: (B, H, W, 1)
+        abedo_image, normal_map = self.compute_abedo_image(self.vertices_proj, self.tri, self.mu_tex)  # (B, H, W, 1)
+        abedo_image = tf.transpose(abedo_image, [1, 2, 3, 0], name='abedos')  # (H, W, 1, B)
+        Yz0 = tf.transpose(normal_map, [1, 2, 3, 0], name='homo_normals')  # (H, W, 3, B)  from z0
+        # here we use the least square estimation (LSE) with data of batchsize to get recovered lighting:
+        # LSE equation: l = (Y x Y_T).inv() x Y x (I./mu_tex)_T
+        Yz0_nec_inv = tf.matrix_inverse(tf.matmul(Yz0, tf.transpose(Yz0, [0, 1, 3, 2])))  # (H, W, 3, 3)
+        I = tf.transpose(self.im_gray, [1, 2, 3, 0])  # (H, W, 1, B)
+        lighting_lse = tf.matmul(tf.matmul(Yz0_nec_inv, Yz0),
+                                 tf.transpose(I / (abedo_image + 1.0), [0, 1, 3, 2]))  # (H, W, 3, 1)
+
+        '''  # The least square estimation (LSE) for alpha
+        # transform the (3N, 10) mu_tex into image shape: (B, H, W, 1)
+        PC = tf.expand_dims(self.pc_tex, axis=-1)  # (3*N, 10, 1)
+        PC_nec_inv = tf.matrix_inverse(tf.matmul(PC, tf.transpose(PC, [0, 2, 1])))  # (3N, 10, 10)
+        diff = I / (tf.matmul(tf.transpose(lighting_lse, [0, 1, 3, 2]), Yz0)) - abedo_image  # (H, W, 1, B)
+        # The following step cannot be fulfilled!!
+        # Since the result of PC_nec_inv x PC takes the size (3N, 10, 1),
+        # which cannot be producted with diff with the size (H, W, 1, B) unless we can inversely transform the diff into (3N, 1, B) space...
+        alpha = tf.matmul(tf.matmul(PC_nec_inv, PC), diff)
+        '''
+
+        # instead, we use the same average alpha for all batch data, that's to say, the same abedo coefficient
+        texture_new = tf.matmul(self.pc_tex, self.param_tex)  # (3*N, 1)
+        texture_new = tf.reshape(texture_new, [3, -1])  # (3, N)
+        texture_new = self.mu_tex + texture_new
+        # Here the self.vertices_proj should be updated according to predicted fine depth
+        # But, how to inversely convert predicted fine depth into new vertices, in order to get new normals ??
+        # If we still use the self.vertices_proj, the SfS loss will make constraints on coarse depth rather than fine depth!!!
+        abedo_image_new, normal_map_new = self.compute_abedo_image(self.vertices_proj, self.tri,
+                                                                   texture_new)  # (B, H, W, 1)
+        abedo_image_new = tf.transpose(abedo_image_new, [1, 2, 3, 0], name='abedos_new')  # (H, W, 1, B)
+        Yz = tf.transpose(normal_map_new, [1, 2, 3, 0], name='homo_normals')  # (H, W, 3, B)  from z
+        intensity_recover = abedo_image_new * tf.matmul(tf.transpose(lighting_lse, [0, 1, 3, 2]),
+                                                        Yz)  # Eqn (8), (H, W, 1, B)
+        intensity_recover = tf.transpose(intensity_recover, [3, 0, 1, 2])  # reformat the shape with (B, H, W, 1)
+
+        return intensity_recover

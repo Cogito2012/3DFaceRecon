@@ -16,6 +16,9 @@ def parse_3dmm_files(model_shapefile, model_expfile, vertex_codefile):
     mu_shape = data['mu_shape']
     pc_shape = data['w']
     tri = data['tri']
+    mu_tex = data['tex']
+    pc_tex = data['w_tex']
+    param_tex = data['alpha_tex']
 
     assert os.path.exists(model_expfile), 'File %s does not exist!' % (model_expfile)
     data = sio.loadmat(model_expfile)
@@ -27,7 +30,7 @@ def parse_3dmm_files(model_shapefile, model_expfile, vertex_codefile):
     vertex_code = data['vertex_code']
 
     mu = mu_shape + mu_exp
-    return vertex_code, tri, mu, pc_shape, pc_exp
+    return vertex_code, tri, mu, pc_shape, pc_exp, mu_tex, pc_tex, param_tex
 
 
 def read_3dmm_model(model_path):
@@ -39,13 +42,17 @@ def read_3dmm_model(model_path):
     model_shapefile = os.path.join(model_path, 'Model_Shape.mat')
     model_expfile = os.path.join(model_path, 'Model_Expression.mat')
     vertex_codefile = os.path.join(model_path, 'vertex_code.mat')
-    vertex_code, tri, mu, pc_shape, pc_exp = parse_3dmm_files(model_shapefile, model_expfile, vertex_codefile)
+    vertex_code, tri, mu, pc_shape, pc_exp, mu_tex, pc_tex, param_tex = \
+        parse_3dmm_files(model_shapefile, model_expfile, vertex_codefile)
     ndim_shape = np.shape(pc_shape)[1]
     ndim_exp = np.shape(pc_exp)[1]
     ndim_pose = 7
     model_params = {'vertex': vertex_code,
                     'tri': tri,
                     'mu': mu,
+                    'mu_tex': mu_tex,
+                    'pc_tex': pc_tex,
+                    'param_tex': param_tex,
                     'pc_shape': pc_shape,
                     'pc_exp': pc_exp,
                     'ndim_shape': ndim_shape,

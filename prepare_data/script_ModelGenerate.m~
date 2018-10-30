@@ -9,6 +9,7 @@ sigma = shapeEV;
 
 tex = texMU(trimIndex1);
 tex = reshape(tex, 3, length(tex)/3);
+pc
 
 segbin = segbin(trimIndex, :);
 

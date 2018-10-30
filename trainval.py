@@ -5,12 +5,25 @@ import os
 import logging
 import argparse
 import utils.parser_3dmm as parser_3dmm
+import utils.listfile_reader as file_reader
+import utils.data_process as data_process
 import scipy.io as sio
 import numpy as np
 
 ROOT_PATH = os.path.dirname(__file__)
 
+def generator(batch_size, img_size, phase='train'):
+    dataset_path = os.path.join(ROOT_PATH, 'data', 'vggface')
+    if phase == 'train' or phase == 'val':
+        image_files, label_files = file_reader.read_listfile_trainval(dataset_path, 'train_list.txt')
+    else:
+        image_files, label_files = file_reader.read_listfile_test(dataset_path, 'val_list')
 
+    counter = 0
+    while True:
+        yield data_process.prepare_input_image(image_files[counter:counter + batch_size], batch_size, img_size), \
+              data_process.prepare_input_label(label_files[counter:counter + batch_size], batch_size)
+        counter = (counter + batch_size) % len(image_files)
 
 
 def train():
