@@ -34,7 +34,7 @@ using GPUDevice = Eigen::GpuDevice;
 
 __global__ void RenderDepth_kernel_1_initialize(
 const float * vertex, const float * tri,const float * image,
-float * depth, float * tri_ind, float * texture_image ,
+float * depth, float * tri_ind, float * normal, float * texture_image ,
 int nver, int ntri,int width, int height,int texture_ch
 )
 {
@@ -44,7 +44,7 @@ const int j = blockIdx.y * blockDim.y + threadIdx.y;
 const bool withinXbonds = i < width;
 const bool withinYbonds = j < height;
 
-//TODO: WENBO: first step is to initialize the depth and tri_inx with -999999 and -1
+//TODO: WENTAO: first step is to initialize the depth and tri_inx with -999999 and -1
 if(withinXbonds && withinYbonds ){
 depth[b * height * width*1 + j * width * 1+ i * 1 + 0 ] = - 99999999999999;
 tri_ind[b * height * width*1 + j * width * 1+ i * 1 + 0 ] = -1;
@@ -52,6 +52,11 @@ tri_ind[b * height * width*1 + j * width * 1+ i * 1 + 0 ] = -1;
 for(int k = 0; k < texture_ch; k++){
  int offset = b* height * width * texture_ch + j * width * texture_ch + i * texture_ch + k;
 texture_image[offset] =  0.0;//image[offset] ;
+}
+
+for(int k = 0 ; k <3; k ++) {
+ int offset = b* height * width * texture_ch + j * width * texture_ch + i * 3 + k;
+normal[offset] = 0.0f;
 }
 }
 
@@ -63,7 +68,7 @@ return;
 __global__ void RenderDepth_kernel_2_map(
 const float * vertex, const float * tri, const float * texture,
 float * depth, float * tri_ind,
-double * point1,double * point2, double * point3,double * h, double * tritex,
+double * point1,double * point2, double * point3,double * h, double * tritex, double * tri_normal, 
 int nver, int ntri,int width, int height, int texture_ch
 )
 {
@@ -73,7 +78,7 @@ const int i = blockIdx.x * blockDim.x + threadIdx.x;
 const bool withinXbonds = i < ntri;
 //const bool withinYbonds = j < height;
 
-//TODO: WENBO: second step is to map the vertexes to x,y coordinates and depth
+//TODO: WENTAO: second step is to map the vertexes to x,y coordinates and depth
 if(withinXbonds){
 int p1 = int(tri[0*ntri + i]);
 int p2 = int(tri[1*ntri + i]);
@@ -100,6 +105,19 @@ tritex[b*ntri* texture_ch +  i * texture_ch + k ] = (double)( (
         texture[b* 3* nver + k* nver + p3]
     )/3.0f);
 }
+
+
+double   p1_2_x = vertex[ b * 3 * nver + 0 * nver + p1] - vertex[ b* 3 * nver + 0 * nver + p2] ;
+double   p1_2_y = vertex[ b * 3 * nver + 1 * nver + p1] - vertex[ b* 3 * nver + 1 * nver + p2];//p1) - vertex(b,1,p2);
+double   p1_2_z = vertex[ b * 3 * nver + 2 * nver + p1] - vertex[ b* 3 * nver + 2 * nver + p2]; //(b,2,p1) - vertex(b,2,p2);
+double   p1_3_x = vertex[ b * 3 * nver + 0 * nver + p1] - vertex[ b* 3 * nver + 0 * nver + p3] ; //(b,0,p1) - vertex(b,0,p3);
+double   p1_3_y = vertex[ b * 3 * nver + 1 * nver + p1] - vertex[ b* 3 * nver + 1 * nver + p3] ; //b,1,p1) - vertex(b,1,p3);
+double   p1_3_z = vertex[ b * 3 * nver + 2 * nver + p1] - vertex[ b* 3 * nver + 2 * nver + p3] ; //(b,2,p1) - vertex(b,2,p3);
+
+    tri_normal[b* ntri * 3+ 3*i + 0 ]= p1_2_y * p1_3_z - p1_2_z * p1_3_y;
+    tri_normal[b* ntri * 3+ 3*i + 1 ] = p1_2_z * p1_3_x - p1_2_x * p1_3_z ;
+    tri_normal[b * ntri* 3+ 3*i + 2] = p1_2_x * p1_3_y  - p1_2_y * p1_3_x;
+
 }
 
 return;
@@ -157,8 +175,8 @@ __device__ bool GPUPointInTri(double * point, double * pt1, double * pt2, double
 }
 __global__ void RenderDepth_kernel_3_generate(
 const float * vertex, const float * tri,
-float * depth,float * texture_image,  float * tri_ind,
-double * point1,double * point2, double * point3,double * h, double * tritex,
+float * depth,float * texture_image,  float * normal, float * tri_ind, 
+double * point1,double * point2, double * point3,double * h, double * tritex, double * tri_normal, 
 int nver, int ntri,int width, int height, int texture_ch
 )
 {
@@ -169,7 +187,7 @@ const bool withinXbonds = i < ntri;
 //const bool withinYbonds = j < height;
 
 int x; int y;
-//TODO: WENBO: second step is to map the vertexes to x,y coordinates and depth
+//TODO: WENTAO: second step is to map the vertexes to x,y coordinates and depth
 if(withinXbonds){
 double point[2];     double pt1[2];    double pt2[2]; double pt3[2];
 
@@ -198,6 +216,10 @@ if(x_max < x_min || y_max < y_min || x_max > width-1 || x_min < 0 || y_max > hei
                 texture_image[b*height *width * texture_ch +  y * width * texture_ch + x * texture_ch + k] =
                     tritex[b*ntri * texture_ch + i * texture_ch + k ];
                 }
+                normal[ b * height  * width * 3 + y * width * 3 + x * 3 + 0 ] = tri_normal[3* i +0 ];
+                normal[ b * height *  width * 3 +  y * width  * 3 +x * 3 + 1  ]  = tri_normal[3* i +1 ];
+                normal[ b * height * width * 3 + y * width * 3 +  x * 3 + 2 ] = tri_normal[3* i +2 ];
+
                 tri_ind[b * height * width * 1 +  y * width * 1 + x *1 + 0] = i;//   [x * height + y] = i;
             }
         }
@@ -213,6 +235,7 @@ void RenderDepth(const GPUDevice& d,
                  typename TTypes<float, 4>::ConstTensor image,
                  typename TTypes<float, 4>::Tensor depth,
                  typename TTypes<float, 4>::Tensor texture_image,
+                 typename TTypes<float, 4>::Tensor normal,
                  typename TTypes<float, 4>::Tensor tri_ind,
                  RenderDepthState params)
  {
@@ -227,31 +250,33 @@ int texture_ch = params.texture_ch;
 dim3 grid;
 dim3 block;
 
-printf("Using GPU to calculate\n");
-printf("RenderDepth ==> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\ttexture channel: %d\n",
-nver,ntri,width,height,texture_ch);
+//printf("Using GPU to calculate\n");
+//printf("RenderDepth ==> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\ttexture channel: %d\n",
+//nver,ntri,width,height,texture_ch);
 
 double * point1 ;
 double * point2 ;
 double * point3 ;
 double * h ;
 double * tritex;
-//TODO: Wenbo the point1/2/3 in CPU code are shared by all batch samples.
+double  * tri_normal;
+//TODO: Wentao the point1/2/3 in CPU code are shared by all batch samples.
 //TODO: However, in GPU code, since we parallely calculate all batches, the point1/2/3 cannot be shared.
 cudaMalloc((void**) & point1, sizeof(double) * batch * 2 * ntri);
 cudaMalloc((void**) & point2, sizeof(double) * batch * 2 * ntri);
 cudaMalloc((void**) & point3, sizeof(double) * batch * 2 * ntri);
 cudaMalloc((void**) & h ,  sizeof(double) * batch * ntri);
 cudaMalloc((void**) & tritex, sizeof(double) * batch* texture_ch * ntri);
+cudaMalloc((void**) & tri_normal, sizeof(double) * batch * 3 * ntri); 
 cudaError_t err = cudaGetLastError();
 
 block = dim3(BLOCKDIM_X,BLOCKDIM_Y,1);
 grid = dim3((width + BLOCKDIM_X - 1)/ BLOCKDIM_X, (height + BLOCKDIM_Y - 1)/BLOCKDIM_Y, batch);
 
-printf("1_initilize ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d \n",block.x,block.y,grid.x,grid.y,grid.z);
+//printf("1_initilize ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d \n",block.x,block.y,grid.x,grid.y,grid.z);
 RenderDepth_kernel_1_initialize <<<grid,block, 0>>>(
 vertex.data(), tri.data(), image.data(),
-depth.data(), tri_ind.data(), texture_image.data(),
+depth.data(), tri_ind.data(), normal.data(),  texture_image.data(),
 nver ,ntri,width,height,texture_ch
 );
 
@@ -266,11 +291,11 @@ if (err != cudaSuccess) {
 //map the tri indexes to coordinates and depth
 block = dim3(BLOCKDIM_X,1,1);
 grid = dim3( (ntri+BLOCKDIM_X-1)/BLOCKDIM_X,1, batch);
-printf("2_map ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d \n",block.x,block.y,grid.x,grid.y,grid.z);
+//printf("2_map ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d \n",block.x,block.y,grid.x,grid.y,grid.z);
 RenderDepth_kernel_2_map <<<grid,block, 0>>>(
 vertex.data(), tri.data(), texture.data(),
 depth.data(), tri_ind.data(),
-point1,point2,point3, h, tritex,
+point1,point2,point3, h, tritex, tri_normal,
 nver ,ntri,width,height,texture_ch
 );
 
@@ -285,11 +310,11 @@ if (err != cudaSuccess) {
 // generate the integer mapped 2d positions
 block = dim3(BLOCKDIM_X,1,1);
 grid = dim3( (ntri+BLOCKDIM_X-1)/BLOCKDIM_X,1, batch);
-printf("3_generate ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d \n",block.x,block.y,grid.x,grid.y,grid.z);
+//printf("3_generate ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d \n",block.x,block.y,grid.x,grid.y,grid.z);
 RenderDepth_kernel_3_generate <<<grid,block, 0>>>(
 vertex.data(), tri.data(),
-depth.data(), texture_image.data(), tri_ind.data(),
-point1,point2,point3, h, tritex,
+depth.data(), texture_image.data(), normal.data(), tri_ind.data(),
+point1,point2,point3, h, tritex, tri_normal,
 nver ,ntri,width,height,texture_ch
 );
 
@@ -304,7 +329,7 @@ cudaFree(point1);
 cudaFree(point2);
 cudaFree(point3);
 cudaFree(h);
-
+cudaFree(tri_normal); 
 }
 
 
@@ -321,7 +346,7 @@ const int j = blockIdx.y * blockDim.y + threadIdx.y;
 const bool withinXbonds = i < width;
 const bool withinYbonds = j < height;
 
-//TODO: WENBO: first step is to initialize the depth and tri_inx with -999999 and -1
+//TODO: WENTAO: first step is to initialize the depth and tri_inx with -999999 and -1
 if(withinXbonds && withinYbonds ){
 
 float depth_grad_ = depth_grad[b * height * width * 1 + j * width * 1 + i * 1 + 0]; // obtain the pixel's gradients
@@ -365,14 +390,14 @@ int ntri   = params.ntri;
 //int error = -1;
 dim3 grid;
 dim3 block;
-printf("RenderDepthGrad ===> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\t ",nver,ntri,width,height);
+//printf("RenderDepthGrad ===> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\t ",nver,ntri,width,height);
 
 
 block = dim3(BLOCKDIM_X,BLOCKDIM_Y,1);
 grid = dim3((width + BLOCKDIM_X - 1)/ BLOCKDIM_X, (height + BLOCKDIM_Y - 1)/BLOCKDIM_Y, batch);
 
 
-printf("renderdepthgrad ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d",block.x,block.y,grid.x,grid.y,grid.z);
+//printf("renderdepthgrad ===> block_x: %d,\tblock_y: %d,\tgrid_x: %d,\tgrid_y:%d,\tgrid_z: %d",block.x,block.y,grid.x,grid.y,grid.z);
 RenderDepthGrad_kernel <<<grid,block, 0>>>(
 depth_grad.data(), vertex.data(), tri.data(),
 depth.data(), tri_ind.data(),

@@ -75,13 +75,14 @@ bool PointInTri(double * point, double * pt1, double * pt2, double * pt3)
 	return u + v <= 1;
 }
 // CPU specialization of actual computation.
-//TODO: Wenbo two Constant input and two calculated output
+//TODO: Wentao two Constant input and two calculated output
 const int MAX_NTRI = 10 * 1000 * 1000;
 static double point1[2* MAX_NTRI];
 static double point2[2* MAX_NTRI];
 static double point3[2* MAX_NTRI];
 static double h     [1* MAX_NTRI];
 static double tritex[3* MAX_NTRI];
+static double tri_normal[3* MAX_NTRI];
 void RenderDepth(const CPUDevice& d,
                  typename TTypes<float, 3>::ConstTensor vertex,
                  typename TTypes<float, 2>::ConstTensor tri,
@@ -89,6 +90,7 @@ void RenderDepth(const CPUDevice& d,
                  typename TTypes<float, 4>::ConstTensor image,
                  typename TTypes<float, 4>::Tensor depth,
                  typename TTypes<float, 4>::Tensor texture_image,
+                 typename TTypes<float, 4>::Tensor normal,
                  typename TTypes<float, 4>::Tensor tri_ind,
                  RenderDepthState params)
 {
@@ -100,12 +102,12 @@ void RenderDepth(const CPUDevice& d,
     int texture_ch = params.texture_ch;
     int nChannels = texture_ch;
 
-    printf("Using CPU to calculate\n");
-    printf("RenderDepth ==> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\ttexture_ch: %d \n",
-    nver,ntri, width,height,texture_ch);
+    //printf("Using CPU to calculate\n");
+    //printf("RenderDepth ==> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\ttexture_ch: %d \n",
+    //nver,ntri, width,height,texture_ch);
     int i,j;
 	int x,y;
-    printf("still good in entering RenderDepth function\n");
+    //printf("still good in entering RenderDepth function\n");
 //	double* point1 = (double * ) malloc(2* ntri * sizeof(double));// new double[2 * ntri];
 //	double* point2 =  (double * ) malloc(2* ntri * sizeof(double)); //new double[2 * ntri];
 //	double* point3 =  (double * ) malloc(2* ntri * sizeof(double)); //new double[2 * ntri];
@@ -122,8 +124,8 @@ void RenderDepth(const CPUDevice& d,
     printf("***************************ERROR*****************\n");
     return ;
     }
-	printf("Are we still good after allocating point1/2/3 and h\n");
-	printf("%p, %p, %p, %p\n",(void*) point1,(void*) point2,(void*) point3,(void*)h);
+//	printf("Are we still good after allocating point1/2/3 and h\n");
+//	printf("%p, %p, %p, %p\n",(void*) point1,(void*) point2,(void*) point3,(void*)h);
 //	double* imgh = new double[width * height];
 //	double* tritex = new double[ntri * nChannels];
 int b;
@@ -136,6 +138,9 @@ for(i = 0; i < width; i++)
 //		imgh[i] = -99999999999999;
     depth(b,j, i, 0) = - 99999999999999;
 //		tri_ind[i] = -1;
+    normal(b,j,i,0)= 0;
+    normal(b,j,i,1) = 0 ;
+    normal(b,j,i,2) = 0;
     tri_ind(b,j,i, 0) = -1;
 }
 
@@ -153,7 +158,7 @@ for(i = 0; i < ntri; i++)
     point3[2*i]   = vertex(b,0,p3); //[3*p3];
     point3[2*i+1] = vertex(b,1,p3); //[3*p3+1];
 
-    //TODO: Wenbo I think that the simplest average of three vertexes are not accurate enougph, that the network cannot be well trained.
+    //TODO: Wentao I think that the simplest average of three vertexes are not accurate enougph, that the network cannot be well trained.
     //TODO: It's better to use a interpolation algorithm as in the papers.
     double cent3d_z = (double)((vertex(b,2,p1) + vertex(b,2,p2) + vertex(b,2,p3))/3.0f);  // (vertex[3*p1+2] + vertex[3*p2+2] + vertex[3*p3+2]) / 3;
 
@@ -166,6 +171,19 @@ for(i = 0; i < ntri; i++)
             texture(b,j,p1) + texture(b,j,p2) + texture(b,j,p3)
         )/3.0f;
     }
+//    for(j =0 ;j < 3; j ++){
+double   p1_2_x = vertex(b,0,p1) - vertex(b,0,p2);
+double   p1_2_y = vertex(b,1,p1) - vertex(b,1,p2);
+double   p1_2_z = vertex(b,2,p1) - vertex(b,2,p2);
+double   p1_3_x = vertex(b,0,p1) - vertex(b,0,p3);
+double   p1_3_y = vertex(b,1,p1) - vertex(b,1,p3);
+double    p1_3_z = vertex(b,2,p1) - vertex(b,2,p3);
+
+    tri_normal[3*i + 0 ]= p1_2_y * p1_3_z - p1_2_z * p1_3_y;
+    tri_normal[3*i + 1 ] = p1_2_z * p1_3_x - p1_2_x * p1_3_z ;
+    tri_normal[3*i + 2] = p1_2_x * p1_3_y  - p1_2_y * p1_3_x; 
+//}
+
 }
 
 //	Mat point(2, 1, CV_64F);
@@ -180,9 +198,9 @@ double point[2];     double pt1[2];    double pt2[2]; double pt3[2];
 for(j = 0; j < height; j ++)
 for(i = 0; i < width; i++)
 {
-    texture_image(b,j,i,0) = image(b,j,i,0);
-    texture_image(b,j,i,1) = image(b,j,i,1);
-    texture_image(b,j,i,2) = image(b,j,i,2);
+    texture_image(b,j,i,0) = 0;
+    texture_image(b,j,i,1) = 0;
+    texture_image(b,j,i,2) = 0;
 }
 
 for(i = 0; i < ntri; i++)
@@ -214,6 +232,10 @@ for(i = 0; i < ntri; i++)
 						texture_image(b, y, x, j) = tritex[nChannels * i + j];
 						 //j * width * height + x * height + y] =  tritex[nChannels * i + j];
 					}
+                
+                normal(b,y,x,0) = tri_normal[3* i +0 ];
+                normal(b,y,x,1) = tri_normal[3* i +1 ];
+                normal(b,y,x,2) = tri_normal[3* i +2 ];
                 tri_ind(b,y,x,0) = i;//   [x * height + y] = i;
             }
         }
@@ -256,7 +278,7 @@ int b;
 for(b=0; b < batch; b++){
 for(j = 0; j < height; j ++){
 for(i = 0; i < width; i ++){
-//TODO: Wenbo focus on the current depth pixel
+//TODO: Wentao focus on the current depth pixel
 
 float depth_grad_ = depth_grad(b,j,i,0); // obtain the pixel's gradients
 int tri_ind_ = tri_ind(b,j,i,0) ;// obtain the current pixel's triangular index.
@@ -288,7 +310,7 @@ public:
 //, attrs(context)
 
   void Compute(OpKernelContext* context) override {
-  printf("I am entering RenderDepthOp Compute\n");
+  //printf("I am entering RenderDepthOp Compute\n");
     const Tensor& vertex = context->input(0);
     const Tensor& tri = context->input(1);
     const Tensor& texture = context->input(2);
@@ -308,7 +330,7 @@ public:
 
     const int batch = image_data.dimension(0);
     const int in_channels = image_data.dimension(3); //channel_last
-    ///TODO: Wenbo I need to print some values like batch, channels, height, width to verify correctness...
+    ///TODO: Wentao I need to print some values like batch, channels, height, width to verify correctness...
     ///TODO: But how to print ?
 //    printf("")
     const int in_height = image_data.dimension(1);
@@ -324,8 +346,8 @@ public:
     const int ntri = tri_data.dimension(1);
 
     const int texture_ch = texture_data.dimension(1);
-    printf("RenderDepth ==> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\ttexture_channel: %d \n ",
-                nver,ntri, in_width,in_height,texture_ch);
+    //printf("RenderDepth ==> nver: %d, \tntri: %d,\twidth: %d, \theight: %d,\ttexture_channel: %d \n ",
+    //            nver,ntri, in_width,in_height,texture_ch);
     OP_REQUIRES(context, tri_space_dim == 3, errors::InvalidArgument("The tri is not 3 x ntri"));
     OP_REQUIRES(context, texture_ch == 3, errors::InvalidArgument("The texture channel must be equal to image channel namely 3"));
 
@@ -339,25 +361,29 @@ public:
     //TODO: Wendo allocate memory space for both depth and tri_ind
     Tensor* depth = NULL;
     Tensor* texture_image = NULL;
+    Tensor* normal = NULL;
     Tensor* tri_ind = NULL;
 
     TensorShape depth_shape({batch, in_height,in_width, 1});
     TensorShape texture_image_shape({batch, in_height, in_width, texture_ch});
+    TensorShape normal_shape({batch, in_height, in_width, 3});
     TensorShape tri_ind_shape({batch, in_height,in_width, 1});
 
-    OP_REQUIRES_OK(context, context->allocate_output(0, depth_shape,   &depth)); //TODO: Wenbo the first output
+    OP_REQUIRES_OK(context, context->allocate_output(0, depth_shape,   &depth)); //TODO: Wentao the first output
     OP_REQUIRES_OK(context, context->allocate_output(1, texture_image_shape, &texture_image));
-    OP_REQUIRES_OK(context, context->allocate_output(2, tri_ind_shape, &tri_ind));//TODO: Wenbo the second output
+    OP_REQUIRES_OK(context, context->allocate_output(2, normal_shape, &normal));
+    OP_REQUIRES_OK(context, context->allocate_output(3, tri_ind_shape, &tri_ind));//TODO: Wentao the second output
     printf("Ok after creating output\n");
-    //TODO: Wenbo obtain the data tensor
+    //TODO: Wentao obtain the data tensor
     typename TTypes<float, 4>::Tensor depth_data = depth->tensor<float, 4>();
-    typename TTypes<float, 4>:: Tensor texture_image_data = texture_image->tensor<float,4>();
     typename TTypes<float, 4>::Tensor tri_ind_data = tri_ind->tensor<float, 4>();
+    typename TTypes<float, 4>:: Tensor texture_image_data = texture_image->tensor<float,4>();
+    typename TTypes<float, 4>:: Tensor normal_data = normal->tensor<float,4>();
 
     //call the function on CPU or GPU
         RenderDepth(context->eigen_device<Device>(),
           vertex_data , tri_data,texture_data, image_data,
-          depth_data,texture_image_data, tri_ind_data,
+          depth_data,texture_image_data, normal_data, tri_ind_data,
           st);
   }
 
@@ -372,7 +398,7 @@ public:
   : OpKernel(context) {}
 //, attrs(context)
   void Compute(OpKernelContext* context) override {
-    printf("I'm entering RenderDepthOpGrad Compute on \n");
+//    printf("I'm entering RenderDepthOpGrad Compute on \n");
 //    printf()
     const Tensor& depth_grad = context->input(0);
     const Tensor& vertex = context->input(1);
@@ -390,7 +416,7 @@ public:
 
     const int batch = image_data.dimension(0);
     const int in_channels = image_data.dimension(3); //channel_last
-    ///TODO: Wenbo I need to print some values like batch, channels, height, width to verify correctness...
+    ///TODO: Wentao I need to print some values like batch, channels, height, width to verify correctness...
     ///TODO: But how to print ?
 //    printf("")
     const int in_height = image_data.dimension(1);
@@ -413,10 +439,10 @@ public:
 
     Tensor* vertex_grad = NULL;
     OP_REQUIRES_OK(context, context->allocate_output(0, vertex.shape(),
-                                                     &vertex_grad));//TODO: Wenbo the first output
+                                                     &vertex_grad));//TODO: Wentao the first output
 //    Tensor* tri_grad = NULL;
 //    OP_REQUIRES_OK(context, context->allocate_output(1, tri.shape(),
-//                                                     &tri_grad));//TODO: Wenbo the second output
+//                                                     &tri_grad));//TODO: Wentao the second output
 
     typename TTypes<float, 3>::Tensor vertex_grad_data = vertex_grad->tensor<float, 3>();
 //    typename TTypes<float, 2>::Tensor output_grad_1_data = tri_grad->tensor<float, 2>();
@@ -443,6 +469,7 @@ REGISTER_OP("RenderDepth")
 //  .Attr("height: int = 50")
   .Output("depth: float")
   .Output("texture_image: float")
+  .Output("normal: float")
   .Output("tri_ind: float")
   .SetShapeFn([](shape_inference::InferenceContext* c) {
 //    RenderDepthAttrs attrs;
@@ -450,7 +477,7 @@ REGISTER_OP("RenderDepth")
 //    c->GetAttr("ntri", &attrs.ntri);
 //    c->GetAttr("width", &attrs.width);
 //    c->GetAttr("height", &attrs.height);
-    printf("I am here in set shapre Fn\n");
+//    printf("I am here in set shape Fn\n");
     DimensionHandle batch = c->Dim(c->input(0), 0);
     DimensionHandle h = c->Dim(c->input(3), 1); //TODO: Channel_last
     DimensionHandle w = c->Dim(c->input(3), 2);
@@ -459,10 +486,11 @@ REGISTER_OP("RenderDepth")
 //out_height = ceil((float)(padded_height - border_size *2) / (float)stride_1);
 //    int out_channels = neighborhood_grid_width * neighborhood_grid_width;
 
-    //TODO: Wenbo set depth image to be 1 channel as well as the tri_ind Tensor
+    //TODO: Wentao set depth image to be 1 channel as well as the tri_ind Tensor
     c->set_output(0, c->MakeShape({batch, h, w, 1 }));
     c->set_output(1, c->MakeShape({batch, h, w, ch}));
-    c->set_output(2, c->MakeShape({batch, h, w, 1 }));
+    c->set_output(2, c->MakeShape({batch, h, w, 3 }));
+    c->set_output(3, c->MakeShape({batch, h, w, 1 }));
     return Status::OK();
   });
 
@@ -486,14 +514,14 @@ REGISTER_OP("RenderDepthGrad")
   }
   );
 
-//TODO: Wenbo added CPU Support
+//TODO: Wentao added CPU Support
 REGISTER_KERNEL_BUILDER(Name("RenderDepth").Device(DEVICE_CPU), RenderDepthOp<CPUDevice>);
 REGISTER_KERNEL_BUILDER(Name("RenderDepthGrad").Device(DEVICE_CPU), RenderDepthOpGrad<CPUDevice>);
 
 
 #if GOOGLE_CUDA
 
-   //TODO: Wenbo GPU device will use another RenderDepth() and RenderDepthGrad()
+   //TODO: Wentao GPU device will use another RenderDepth() and RenderDepthGrad()
   /* Declare explicit instantiations in kernel_example.cu.cc. */
 //  extern RenderDepth();
 //  extern RenderDepthGrad();

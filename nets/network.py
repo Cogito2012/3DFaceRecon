@@ -82,8 +82,8 @@ class FaceRecNet:
         for n in range(self.nIter):
             scope_name = 'Input_Rendering_iter%d'%(n)
             with tf.variable_scope(scope_name, scope_name):
-                # transforming the predicted params into rendered PNCC and Masked Image
-                self.pncc_batch, self.maskimg_batch, _ = self.rendering_layer(self.pred_params)
+                # transforming the predicted params into rendered PNCC, normal map and Masked Image
+                self.pncc_batch, self.normal_batch, self.maskimg_batch, _ = self.rendering_layer(self.pred_params)
 
             scope_name = 'CoarseNet_iter_iter%d'%(n)
             with tf.variable_scope(scope_name, scope_name):
@@ -135,22 +135,26 @@ class FaceRecNet:
                                  tf.slice(vertex_proj, [0, 2, 0], [-1, 1, -1])], axis=1)  #(B, 3, N)
 
         # start rendering with z_buffer renderer
-        pncc_batch, maskimg_batch, depthimg_batch = self.zbuffer_rendering_tf(vertex_proj)
+        pncc_batch, normal_batch, maskimg_batch, depthimg_batch = self.zbuffer_rendering_tf(vertex_proj)
 
-        return pncc_batch, maskimg_batch, depthimg_batch
+        return pncc_batch, normal_batch, maskimg_batch, depthimg_batch
 
 
     def zbuffer_rendering_tf(self, vertex_proj):
-        pncc_batch = np.zeros((self.batch_size, self.im_size, self.im_size, 3), dtype=np.float32)
-        maskimg_batch = np.zeros((self.batch_size, self.im_size, self.im_size, 1), dtype=np.float32)
-        
+
+        #prepare vertices, triangles, and texture       
         tf_vertex = tf.to_float(vertex_proj, name='vertices')  # (B, 3, N)
         tf_triangles = tf.constant(self.tri, tf.float32, name='triangles')  # (3, N)
         tf_texture = tf.tile(tf.expand_dims(tf.constant(self.vertex_code, tf.float32), axis=0), [self.batch_size, 1, 1], name='texture')  # (B, 3, N)
-
-        tf_depth, tf_tex, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=self.im_gray)
+        # call TF rendering layer
+        tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=self.im_gray)
+        
+        # pncc result
         pncc_batch = tf.clip_by_value(tf_tex, 0.0, 1.0)
-       
+        # normal map result
+        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1)
+        zero_ind = tf.where(mag == 0)
+        ################### TODO #######################
         mask = tf.minimum(tf.maximum(tf_depth, 0.0), 1.0)  # (B, H, W, 1)
         maskimg_batch = mask * self.im_gray
         

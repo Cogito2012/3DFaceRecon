@@ -8,7 +8,7 @@ import configparser
 
 
 # Register ops for compilation here
-###TODO: Wenbo added RenderDepth
+###TODO: Wentao added RenderDepth
 OP_NAMES = ['render_depth','backward_warp', 'downsample', 'correlation', 'forward_warp']
 
 
@@ -28,7 +28,7 @@ def compile(op=None):
     
     tf_inc = " "+"-I" + tf.sysconfig.get_include()  #.join(tf.sysconfig.get_compile_flags())
     tf_lib = " "+"-L" + tf.sysconfig.get_lib()  #.join(tf.sysconfig.get_link_flags())
-    warnings.warn("The include and lib dir for customizing ops of tensorflow is forced to baowenbo's local drive: \n"
+    warnings.warn("The include and lib dir for customizing ops of tensorflow is forced to baowentao's local drive: \n"
                   + tf_inc + " \n" + tf_lib)
     for n in to_compile:
         print("\n\n"+str(n))
@@ -74,7 +74,7 @@ for n in OP_NAMES:
 
 os.chdir(cwd)
 
-###TODO: Wenbo added the forward function of RenderDepth
+###TODO: Wentao added the forward function of RenderDepth
 def render_depth(ver,tri,texture, image, **kwargs):
     ###TODO: Note that the first output is the rendered depth,
     ###TODO: while the second output is for tri_ind that each depth pixel corresponds to
@@ -91,7 +91,7 @@ forward_warp = _forward_warp_module.forward_warp
 
 
 # Register op gradients
-###TODO: Wenbo added the backward function of RenderDepth
+###TODO: Wentao added the backward function of RenderDepth
 @ops.RegisterGradient("RenderDepth")
 def _RenderDepthGrad(op, depth_grad, tri_ind_grad):
     ###TODO: vertex has gradients, tri dose not have gradients

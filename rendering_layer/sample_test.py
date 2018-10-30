@@ -3,12 +3,14 @@ import os #, cv2
 ROOT_PATH = os.path.dirname(__file__)
 import sys
 sys.path.append(os.path.join(ROOT_PATH, '../utils'))
+sys.path.append(os.path.join(ROOT_PATH, '../mesh_render'))
 
 from scipy.misc import imread, imsave, imshow, imresize, imsave
 import parser_3dmm as parser_3dmm
 from numpy.random import rand
 from math import sin, cos
 import scipy.io as sio
+import time
 
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
@@ -71,6 +73,7 @@ def rotation_matrix(angles):
 
 
 def main():
+    device = sys.argv[1]
     model_3dmm_path = os.path.join(ROOT_PATH, '../3dmm')
     modeldata_3dmm = parser_3dmm.read_3dmm_model(model_3dmm_path)
     vertex_code = modeldata_3dmm['vertex']
@@ -99,18 +102,22 @@ def main():
     
     vertex_proj = np.dot(f * R, vertex) + np.tile(np.expand_dims(t3d, axis=1), [1, nvert])
     vertex_proj[1, :] = im_size - vertex_proj[1, :]
-
+    
+    # for pncc map
     vertex_proj = vertex_proj.astype(np.float32)
     tri = tri.astype(np.float32)
     texture = vertex_code.astype(np.float32)
+    
 
-    with tf.device("/device:GPU:0"):
+    with tf.device("/device:%s:0"%(device)):
         tf_vertex = tf.Variable(tf.constant(np.expand_dims(vertex_proj,axis=0)))
         tf_triangles = tf.Variable(tf.constant(tri))
         tf_texture = tf.Variable(tf.constant(np.expand_dims(texture,axis=0)))
         tf_image =tf.Variable(tf.constant(np.expand_dims(im.astype(np.float32)/255.0,axis=0)))
 
-        tf_depth,tf_tex, tf_tri_ind  =render_depth(ver=tf_vertex,tri=tf_triangles,texture = tf_texture,image=tf_image)
+        t_start = time.time()
+        tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex,tri=tf_triangles,texture = tf_texture,image=tf_image)
+        t_graph = time.time() - t_start
 
         # must init the vertex and tri before depth.eval()
         init_g = tf.global_variables_initializer()
@@ -120,15 +127,14 @@ def main():
             sess.run(init_g)
             sess.run(init_l)
 
-            tf_depth_value,tf_tex_value, tf_tri_ind_value = sess.run([tf_depth, tf_tex, tf_tri_ind])
+            t_start = time.time()
+            tf_depth_value,tf_tex_value, tf_normal, tf_tri_ind_value = sess.run([tf_depth, tf_tex, tf_normal, tf_tri_ind])
+            t_run = time.time() - t_start
 
-            tf_vertex_value = tf_vertex.eval()
-            tf_tri_value = tf_triangles.eval()
-            tf_image_value = tf_image.eval()
-            
-            # code_map (PNCC), depth_buffer (depth image)
-            depth_buffer = tf_depth_value[0,:,:,0]
-            code_map = tf_tex_value[0,:,:,:]
+            # code_map (PNCC), depth_buffer (depth image), normal_map
+            depth_buffer = tf_depth_value[0, :, :, 0]
+            code_map = tf_tex_value[0, :, :, :]
+            normal_map = tf_normal[0, :, :, :]
 
     # binarization for masking
     mask = np.minimum(np.maximum(depth_buffer, 0.0), 1.0)
@@ -138,10 +144,21 @@ def main():
     ind = np.where(depth_buffer > 0.0)
     depthimg = (depth_buffer - np.min(depth_buffer[ind]))/(np.max(depth_buffer[ind]) - np.min(depth_buffer[ind]))
     depthimg = np.maximum(depthimg, 0.0)*255.0
+    # normal image
+    mag_map = np.sum(normal_map**2, axis=2)  #(H, W)
+    zero_ind = (mag_map == 0)
+    mag_map[zero_ind] = 1.0
+    normal_map[zero_ind] = 0.0
+    normal_map = normal_map /np.expand_dims(np.sqrt(mag_map), axis=2)
+    normalimg = (normal_map - np.min(normal_map))/(np.max(normal_map) - np.min(normal_map)) * 255.0
     
-    imsave('test_pncc_tf_gpu.png',np.round(np.clip(code_map,0.0,1.0) * 255.0).astype(np.uint8))
-    imsave('test_maskimg_tf_gpu.png',np.round(maskimg).astype(np.uint8))
-    imsave('test_depthimg_tf_gpu.png', np.round(depthimg).astype(np.uint8))
+    imsave('test_pncc_tf_%s.png'%(device),np.round(np.clip(code_map,0.0,1.0) * 255.0).astype(np.uint8))
+    imsave('test_maskimg_tf_%s.png'%(device),np.round(maskimg).astype(np.uint8))
+    imsave('test_depthimg_tf_%s.png'%(device), np.round(depthimg).astype(np.uint8))
+    imsave('test_normalimg_tf_%s.png'%(device), np.round(normalimg).astype(np.uint8))
+
+    print('Op time: {} s, Running time: {} s.'.format(t_graph, t_run))
+
 
 if __name__ == '__main__':
     main()

@@ -37,7 +37,7 @@ using GPUDevice = Eigen::GpuDevice;
 //
 struct RenderDepthState {
 //  RenderDepthState(int batch, int in_height, int in_width , int nver, int ntri) {
-//    TODO: Wenbo this struct is never used...
+//    TODO: Wentao this struct is never used...
 //    batch = batch;
 //    nver = nver;
 //    ntri  = ntri;
@@ -52,7 +52,7 @@ struct RenderDepthState {
     int height;
     int texture_ch;
 };
-//TODO: Wenbo added CPU functor declaration
+//TODO: Wentao added CPU functor declaration
 void RenderDepth(const CPUDevice& d,
                    typename TTypes<float, 3>::ConstTensor vertex,
                  typename TTypes<float, 2>::ConstTensor tri,
@@ -60,6 +60,7 @@ void RenderDepth(const CPUDevice& d,
                  typename TTypes<float, 4>::ConstTensor image,
                  typename TTypes<float, 4>::Tensor depth,
                  typename TTypes<float, 4>::Tensor texture_image,
+                 typename TTypes<float, 4>::Tensor normal,
                  typename TTypes<float, 4>::Tensor tri_ind,
                  RenderDepthState params);
 
@@ -72,7 +73,7 @@ void RenderDepthGrad(const CPUDevice& d,
                      typename TTypes<float, 3>::Tensor vertex_grad,
                      RenderDepthState params);
 
- //TODO: Wenbo added GPU functor declaration (valid when CUDA is avalable)
+ //TODO: Wentao added GPU functor declaration (valid when CUDA is avalable)
 #if GOOGLE_CUDA
 
 void RenderDepth(const GPUDevice & d,
@@ -82,6 +83,7 @@ void RenderDepth(const GPUDevice & d,
                  typename TTypes<float, 4>::ConstTensor image,
                  typename TTypes<float, 4>::Tensor depth,
                  typename TTypes<float, 4>::Tensor texture_image,
+                 typename TTypes<float, 4>::Tensor normal,
                  typename TTypes<float, 4>::Tensor tri_ind,
                  RenderDepthState params);
 

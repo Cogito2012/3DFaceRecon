@@ -1,5 +1,4 @@
 import tensorflow as tf
-# from nets.network import FaceRecNet
 from nets.network import FaceRecNet
 import time
 import os

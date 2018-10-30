@@ -11,6 +11,7 @@ rendering_layer/*.png
 rendering_layer/__pycache__
 rendering_layer/ops_src/*.so
 rendering_layer/ops_src/*.o
+rendering_layer/ops_src/*.bk
 
 zbuffer_render/
 
