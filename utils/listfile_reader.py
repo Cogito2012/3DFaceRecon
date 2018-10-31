@@ -17,9 +17,9 @@ def read_listfile_trainval(dataset_path, filename):
         strline = strline.strip('.txt\n')
         if strline == '':
             break
-        imgfile_abspath = os.path.join(dataset_path, 'face_images', strline, '.jpg')
+        imgfile_abspath = os.path.join(dataset_path, 'face_images', strline + '.jpg')
         imgfile_results.append(imgfile_abspath)
-        labelfile_abspath = os.path.join(dataset_path, 'labels', strline, '.txt')
+        labelfile_abspath = os.path.join(dataset_path, 'labels', strline + '.txt')
         labelfile_results.append(labelfile_abspath)
         # read the next line
         strline = f.readline()
@@ -42,7 +42,7 @@ def read_listfile_test(dataset_path, filename):
         strline = strline.strip('.txt\n')
         if strline == '':
             break
-        imgfile_abspath = os.path.join(dataset_path, 'face_images', strline, '.jpg')
+        imgfile_abspath = os.path.join(dataset_path, 'face_images', strline + '.jpg')
         imgfile_results.append(imgfile_abspath)
         # read the next line
         strline = f.readline()

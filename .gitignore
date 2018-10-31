@@ -1,11 +1,14 @@
-3dmm/*
 .idea/
+
+3dmm/*
+data/vggface
+
+mesh_render/
+
 nets/*.pyc
 nets/__pycache__
-mesh_render/*
 
-utils/__pycache__
-utils/*.pyc
+pretrained/*.ckpt
 
 rendering_layer/*.png
 rendering_layer/__pycache__
@@ -13,8 +16,10 @@ rendering_layer/ops_src/*.so
 rendering_layer/ops_src/*.o
 rendering_layer/ops_src/*.bk
 
-zbuffer_render/
-data/*
+utils/__pycache__
+utils/*.pyc
 
-temp.py
+zbuffer_render/
+
+
 

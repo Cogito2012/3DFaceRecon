@@ -33,5 +33,26 @@ def prepare_input_image(image_files, batch_size, img_size):
 
 
 
-def prepare_input_label(label_files, batch_size):
-    pass
+def prepare_input_label(label_files, batch_size, label_dim):
+    '''prepare the input label with 2-D tensor shape
+
+    :param label_files: a batch of label files
+    :param batch_size: batch size
+    :param label_dim: label dim (235,)
+    :return: 2-D data, (batchsize, label_dim)
+    '''
+    assert len(label_files) == batch_size
+    input_label = np.zeros([batch_size, label_dim])
+    for i in range(batch_size):
+        if not os.path.exists(label_files[i]):
+            raise FileNotFoundError
+        try:
+            # read image with BGR order
+            labels = np.loadtxt(label_files[i])
+        except:
+            raise IOError
+        if labels.shape[0] == label_dim: # gray image already
+            input_label[i, :] = labels
+        else:
+            raise IOError
+    return input_label

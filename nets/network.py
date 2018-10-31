@@ -1,3 +1,7 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import numpy as np
 import tensorflow as tf
 from math import cos, sin
@@ -8,6 +12,7 @@ from tensorflow.contrib.slim.python.slim.nets import resnet_v1
 from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
 
 from rendering_layer.ops import render_depth
+import os
 
 class FaceRecNet:
     def __init__(self, im_gray=None, params_label=None, mesh_data=None, nIter=4, batch_size=64, im_size=200, weight_decay=1e-4):
@@ -21,6 +26,9 @@ class FaceRecNet:
         self.lambda_sh = 1.0
         self.lambda_f = 5e-3
         self.lambda_sm = 1.0
+        self.gray_mean = 126.064
+        self.pretrained_resnet_v1 = './pretrained/res101.ckpt'
+        self.pretrained_vgg16 = './pretrained/vgg16.ckpt'
 
         # mesh data
         self.vertex_code = mesh_data['vertex']
@@ -46,8 +54,10 @@ class FaceRecNet:
         pose_params = tf.tile(tf.expand_dims(init_pose, axis=0), [batch_size, 1])
         self.pred_params = tf.concat([pose_params, geo_params], axis=1, name='pred_params')  # pose + shape + expression
 
-        self.summaries = {}
-
+        self.losses = {}
+        self.scalar_summaries = {}
+        self.image_summaries = {}
+        self.histogram_summaries = {}
 
     def build(self, is_training=True):
         '''To create the architechture of the proposed method
@@ -66,18 +76,16 @@ class FaceRecNet:
                             trainable=is_training):
             # CoarseNet
             self.build_coarse_net()
-            self.summaries.update({
-                                   'pred_params': self.pred_params})
+            self.histogram_summaries.update({'pred_params': self.pred_params})
             # Rendering Layer
             self.depth_rendering_layer()
-            self.summaries.update({'pncc_map': self.pncc_batch,
-                                   'mask_im': self.maskimg_batch,
-                                   'normal_map': self.normal_batch,
-                                   'coarse_depth': self.coarse_depth_map})
-
+            self.image_summaries.update({'pncc_map': self.pncc_batch,
+                                        'mask_im': self.maskimg_batch,
+                                        'normal_map': self.normal_batch,
+                                        'coarse_depth': self.coarse_depth_map})
             # FineNet
             self.build_fine_net()
-            self.summaries.update({'fine_depth': self.pred_depth_map})
+            self.image_summaries.update({'fine_depth': self.pred_depth_map})
 
         return self.pred_depth_map
 
@@ -292,7 +300,7 @@ class FaceRecNet:
             pose_pred = tf.slice(self.pred_params, [0, 0], [-1, self.ndim_pose], name='pose_pred')  # (batchsize, ndim_pose)
             pose_label = tf.slice(self.params_label, [0, 0], [-1, self.ndim_pose], name='pose_label')
             loss_pose = tf.losses.mean_squared_error(pose_label, pose_pred, scope='pose_loss')
-            self.summaries.update({'pose_loss': loss_pose})
+            self.losses['pose_loss'] = loss_pose
 
             # geometry loss (GMSE)
             geometry_pred = tf.slice(self.pred_params, [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_pred')  # (batchsize, ndim_shape + ndim_exp)
@@ -301,26 +309,27 @@ class FaceRecNet:
             loss_geometry = tf.losses.mean_squared_error(tf.matmul(geometry_basis, geometry_label, transpose_b=True),
                                                          tf.matmul(geometry_basis, geometry_pred, transpose_b=True),
                                                          scope='geometry_loss')
-            self.summaries.update({'geometry_loss': loss_geometry})
+            self.losses['geometry_loss'] = loss_geometry
 
             # Shape from Shading (SfS) loss
             intensity_recover = self.get_spherical_harmonics_model()
             loss_sh = tf.losses.mean_squared_error(self.im_gray, intensity_recover, scope='spherical_harmonics_loss')
-            self.summaries.update({'spherical_harmonics_loss': loss_sh})
+            self.losses['spherical_harmonics_loss'] = loss_sh
 
             # fidelity loss of depth map
             loss_fidelity = tf.losses.mean_squared_error(self.coarse_depth_map, self.pred_depth_map, scope='fidelity_loss')
-            self.summaries.update({'fidelity_loss': loss_fidelity})
+            self.losses['fidelity_loss'] = loss_fidelity
 
             # smoothness loss of depth map
             filtered_depth = tf.map_fn(lambda x: self.laplace_transform(x), tf.squeeze(self.pred_depth_map), dtype=tf.float32, name='laplacian_smoothing')
             loss_smooth = tf.contrib.layers.l1_regularizer(1.0)(filtered_depth)
-            self.summaries.update({'smoothness_loss': loss_smooth})
+            self.losses['smoothness_loss'] = loss_smooth
 
             # final loss function
             loss = self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
-            self.summaries.update({'total_loss', loss})
+            self.losses['total_loss'] = loss
 
+            self.scalar_summaries.update(self.losses)
             return loss
 
     
@@ -400,3 +409,107 @@ class FaceRecNet:
         intensity_recover = tf.transpose(intensity_recover, [3, 0, 1, 2])  # reformat the shape with (B, H, W, 1)
 
         return intensity_recover
+
+
+    def add_summaries(self):
+        ''' add all summaries into tensorflow summaries
+
+        :return:
+        '''
+        val_summaries = []
+        with tf.device("/cpu:0"):
+            # add summaries of input image
+            image = self.im_gray + self.gray_mean
+            image = tf.reverse(image, axis=[-1])
+            val_summaries.append(tf.summary.image('input image', image))
+            # add summaries of predicted vars
+            for key, var in self.scalar_summaries.items():
+                val_summaries.append(tf.summary.scalar(key, var))
+            for key, var in self.image_summaries.items():
+                val_summaries.append(tf.summary.image(key, var))
+            for key, var in self.histogram_summaries.items():
+                tf.summary.histogram(var.op.name, var)
+
+        summary_op = tf.summary.merge_all()
+        summary_op_val = tf.summary.merge(val_summaries)
+        return summary_op, summary_op_val
+
+
+    def initialize_models(self, sess):
+        # Fresh train directly from ImageNet weights
+        print('Loading initial model weights from {:s} and {:s}'.format(self.pretrained_resnet_v1, self.pretrained_vgg16))
+        variables = tf.global_variables()
+        # Initialize all variables first
+        sess.run(tf.variables_initializer(variables, name='init'))
+        variables_to_restore_resv1, variables_to_restore_res16 = self.get_variables_in_ckpt(variables, self.pretrained_resnet_v1, self.pretrained_vgg16)
+
+        # Get the variables to restore Res50
+        restorer = tf.train.Saver(variables_to_restore_resv1)
+        restorer.restore(sess, self.pretrained_resnet_v1)
+        # Get the variables to restore VGG16
+        restorer = tf.train.Saver(variables_to_restore_res16)
+        restorer.restore(sess, self.pretrained_vgg16)
+        print('Loaded.')
+
+        # Initial file lists are empty
+        np_paths = []
+        ss_paths = []
+        last_snapshot_iter = 0
+        return last_snapshot_iter, np_paths, ss_paths
+
+
+    def get_variables_in_ckpt(self, variables, pretrained_resv1, pretrained_vgg16):
+        try:
+            reader = pywrap_tensorflow.NewCheckpointReader(pretrained_resv1)
+            var_keep_dic_resv1 = reader.get_variable_to_shape_map()
+            reader = pywrap_tensorflow.NewCheckpointReader(pretrained_vgg16)
+            var_keep_dic_vgg16 = reader.get_variable_to_shape_map()
+        except Exception as e:  # pylint: disable=broad-except
+            print(str(e))
+            if "corrupted compressed block contents" in str(e):
+                print("It's likely that your checkpoint file has been compressed "
+                      "with SNAPPY.")
+
+        variables_to_restore_resv1 = []
+        for v in variables:
+            if v.name.split(':')[0] in var_keep_dic_resv1:
+                print('Variables restored: %s' % v.name)
+                variables_to_restore_resv1.append(v)
+
+        variables_to_restore_vgg16 = []
+        for v in variables:
+            if v.name.split(':')[0] in var_keep_dic_vgg16:
+                print('Variables restored: %s' % v.name)
+                variables_to_restore_vgg16.append(v)
+
+        return variables_to_restore_resv1, variables_to_restore_vgg16
+
+
+    def snapshot(self, sess, tf_saver, checkpoints_dir, iter, prefix='FaceRecoNet'):
+        # Store the model snapshot
+        filename = prefix + '_iter_{:d}'.format(iter) + '.ckpt'
+        filename = os.path.join(checkpoints_dir, filename)
+        tf_saver.save(sess, filename)
+        print('Wrote snapshot to: {:s}'.format(filename))
+
+
+    def remove_snapshot(self, np_paths, ss_paths, keep=5):
+        to_remove = len(np_paths) -keep
+        for c in range(to_remove):
+            nfile = np_paths[0]
+            os.remove(str(nfile))
+            np_paths.remove(nfile)
+
+        to_remove = len(ss_paths) - keep
+        for c in range(to_remove):
+            sfile = ss_paths[0]
+            # To make the code compatible to earlier versions of Tensorflow,
+            # where the naming tradition for checkpoints are different
+            if os.path.exists(str(sfile)):
+                os.remove(str(sfile))
+            else:
+                os.remove(str(sfile + '.data-00000-of-00001'))
+                os.remove(str(sfile + '.index'))
+            sfile_meta = sfile + '.meta'
+            os.remove(str(sfile_meta))
+            ss_paths.remove(sfile)
