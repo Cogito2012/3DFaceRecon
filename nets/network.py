@@ -11,6 +11,7 @@ from tensorflow.contrib.slim import arg_scope
 from tensorflow.contrib.slim.python.slim.nets import resnet_v1
 from tensorflow.contrib.slim.python.slim.nets.resnet_v1 import resnet_v1_block
 
+
 from rendering_layer.ops import render_depth
 import os
 
@@ -23,12 +24,16 @@ class FaceRecNet:
         self.im_size = im_size
         self.weight_decay = weight_decay
         self.ndim_tex = 10
-        self.lambda_sh = 1.0
-        self.lambda_f = 5e-3
-        self.lambda_sm = 1.0
+        self.lambda_pose = 1e-3
+        self.lambda_geo = 1e-6
+        self.lambda_sh = 1.0  # unused
+        self.lambda_f = 100  # 5e-2 in paper
+        self.lambda_sm = 1e-5  # 1.0 in paper
         self.gray_mean = 126.064
         self.pretrained_resnet_v1 = './pretrained/res101.ckpt'
         self.pretrained_vgg16 = './pretrained/vgg16.ckpt'
+        self.net_scopes = {'coarse_net': 'resnet_v1_101',
+                           'fine_net': 'vgg_16'}
 
         # mesh data
         self.vertex_code = mesh_data['vertex']
@@ -52,12 +57,14 @@ class FaceRecNet:
         geo_params = tf.zeros((self.batch_size, self.ndim_shape + self.ndim_exp), dtype=tf.float32)
         init_pose = tf.constant([0, 0, 0, self.im_size / 2.0, self.im_size / 2.0, 0, 0.001], dtype=tf.float32)
         pose_params = tf.tile(tf.expand_dims(init_pose, axis=0), [batch_size, 1])
-        self.pred_params = tf.concat([pose_params, geo_params], axis=1, name='pred_params')  # pose + shape + expression
+        init_pred_params = tf.concat([pose_params, geo_params], axis=1, name='pred_params')  # pose + shape + expression (B, d)
+        self.pred_params = tf.expand_dims(tf.expand_dims(init_pred_params, axis=1), axis=1)  # (B, 1, 1 ,d)
 
         self.losses = {}
         self.scalar_summaries = {}
         self.image_summaries = {}
         self.histogram_summaries = {}
+        self.tf_print = {}
 
     def build(self, is_training=True):
         '''To create the architechture of the proposed method
@@ -107,26 +114,28 @@ class FaceRecNet:
                     self.rendering_layer(vertices_proj, self.tri, self.vertex_code)
 
             scope_name = 'CoarseNet_iter_iter%d'%(n)
+            # scope_name = self.net_scopes['coarse_net']
             with tf.variable_scope(scope_name, scope_name):
                 # shape: [batch_size, height, width, channels], channels = 7
                 net_input = tf.concat([maskimg_batch, pncc_batch, normal_batch], axis=3, name='input_data')
                 # CoarseNet
-                net_conv = slim.conv2d(net_input, 32, [7, 7], stride=2, scope='conv1')
-                res_blocks = [resnet_v1_block('block1', base_depth=32, num_units=2, stride=1),
-                              resnet_v1_block('block2', base_depth=64, num_units=2, stride=2),
-                              resnet_v1_block('block3', base_depth=128, num_units=2, stride=2),
-                              resnet_v1_block('block4', base_depth=256, num_units=2, stride=2)]
+                net_conv = slim.conv2d(net_input, 64, [7, 7], stride=2, scope='conv_in')
+                res_blocks = [resnet_v1_block('block1', base_depth=64, num_units=2, stride=1),  # in paper: 32
+                              resnet_v1_block('block2', base_depth=128, num_units=2, stride=2), # in paper: 64
+                              resnet_v1_block('block3', base_depth=256, num_units=2, stride=2), # in paper: 128
+                              resnet_v1_block('block4', base_depth=512, num_units=2, stride=2)] # in papar: 256
                 net_conv, _ = resnet_v1.resnet_v1(net_conv, res_blocks,
-                                                  global_pool=False, include_root_block=False, reuse=False, scope='conv_blocks')
-                net_conv = slim.conv2d(net_conv, self.ndim, [3, 3], scope='conv2')
-                net_pool = tf.reduce_mean(net_conv, [1, 2], keep_dims=False, name='pooling') # Global average pooling. 13x13
+                                                  global_pool=False, include_root_block=False, reuse=False)
+                net_conv = slim.conv2d(net_conv, self.ndim, [3, 3], scope='conv_out')
+                net_pool = tf.reduce_mean(net_conv, [1, 2], keep_dims=True, name='pooling') # Global average pooling. 13x13
                 self.pred_params = slim.fully_connected(net_pool, self.ndim,
                                      weights_initializer=tf.random_normal_initializer(mean=0.0, stddev=0.001),
-                                     activation_fn=None, scope='pred_params')
+                                     activation_fn=None, scope='fc')
 
 
     def vertices_transform(self, pred_params):
         # parse geometry and pose parameters from prediction
+        pred_params = tf.squeeze(pred_params)  # (B, d)
         pose_params = tf.slice(pred_params, [0, 0], [-1, self.ndim_pose], name='pred_pose_params')  # (B, ndim_pose)
         shape_params = tf.slice(pred_params, [0, self.ndim_pose], [-1, self.ndim_shape], name='pred_shape_params')  # (B, ndim_shape)
         exp_params = tf.slice(pred_params, [0, self.ndim_pose + self.ndim_shape], [-1, self.ndim_exp], name='pred_exp_params') # (B, ndim_exp)
@@ -164,29 +173,40 @@ class FaceRecNet:
         tf_vertex = tf.to_float(vertex_proj, name='vertices')  # (B, 3, N)
         tf_triangles = tf.constant(triangles, tf.float32, name='triangles')  # (3, N)
         tf_texture = tf.tile(tf.expand_dims(tf.constant(colors, tf.float32), axis=0), [self.batch_size, 1, 1], name='texture')  # (B, 3, N)
+        tf_image = tf.tile(self.im_gray, [1, 1, 1, 3], name='image')
         # call TF rendering layer
-        tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=self.im_gray)
+        tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=tf_image)
         
         # 1. pncc result
         pncc_batch = tf.clip_by_value(tf_tex, 0.0, 1.0)
 
         # 2. normal map result
-        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
-        normal_map = tf.maximum(tf_normal, 0.0)  # if v <0, v == 0
-        normal_map = normal_map / tf.tile(tf.expand_dims(tf.sqrt(mag), axis=3), [1, 1, 1, 3])  # normalize vertices normals
-        normal_batch = tf.map_fn(lambda x: (x - tf.reduce_min(x, axis=[0, 1])) /
-                                           (tf.reduce_max(x, axis=[0, 1]) - tf.reduce_min(x, axis=[0, 1])), normal_map, dtype=tf.float32)
-        normalimg_batch = tf.map_fn(lambda x: tf.maximum(x, 0.0) * 255.0, normal_batch, dtype=tf.float32)
+        flip_ind = tf_normal[:, :, :, 2] < 0
+        tf_normal = tf.where(tf.tile(tf.expand_dims(flip_ind, axis=3), [1, 1, 1, 3]), -1.0 * tf_normal, tf_normal)  # flip the opposite normal vectors
+        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1)
+        mag = tf.where(tf.not_equal(mag, 0.0), mag, tf.zeros_like(mag) + 1.0)  # mag[mag==0.0] = 1.0
+        normalimg_batch = tf_normal / tf.expand_dims(tf.sqrt(mag), axis=3)  # normalization with magnitude, range (-1, 1)
+        # mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
+        # normal_map = tf.maximum(tf_normal, 0.0)  # if v <0, v == 0
+        # normal_map = normal_map / tf.tile(tf.expand_dims(tf.sqrt(mag), axis=3), [1, 1, 1, 3])  # normalize vertices normals
+        # normal_batch = tf.map_fn(lambda x: (x - tf.reduce_min(x, axis=[0, 1])) /
+        #                                    (tf.reduce_max(x, axis=[0, 1]) - tf.reduce_min(x, axis=[0, 1])), normal_map, dtype=tf.float32)
+        # normalimg_batch = tf.map_fn(lambda x: tf.maximum(x, 0.0) * 255.0, normal_batch, dtype=tf.float32)
 
         # 3. masked image result
-        mask = tf.minimum(tf.maximum(tf_depth, 0.0), 1.0)  # (B, H, W, 1)
+        mask = tf.clip_by_value(tf_depth, 0.0, 1.0)  # (B, H, W, 1)
         maskimg_batch = mask * self.im_gray
 
         # 4. depth image result
         tf_depth = tf.squeeze(tf_depth)  # (B, H, W)
-        foreground = tf.map_fn(lambda x: tf.gather_nd(x, tf.where(x > 0.0)), tf_depth, dtype=tf.float32)
-        tf_depth_norm = tf.map_fn(lambda x: (x[0] - tf.reduce_min(x[1])) / (tf.reduce_max(x[1]) - tf.reduce_min(x[1])), (tf_depth, foreground), dtype=tf.float32)
-        depthimg_batch = tf.map_fn(lambda x: tf.maximum(x, 0.0)*255.0, tf_depth_norm, dtype=tf.float32)
+        def foreground_normalization(depth_map):
+            foreground = tf.gather_nd(depth_map, tf.where(depth_map > 0.0))
+            return (depth_map - tf.reduce_min(foreground)) / (tf.reduce_max(foreground) - tf.reduce_min(foreground))
+        depth_norm = tf.map_fn(foreground_normalization, tf_depth, dtype=tf.float32)
+
+        # foreground = tf.map_fn(lambda x: tf.gather_nd(x, tf.where(x > 0.0)), tf_depth, dtype=tf.float32)
+        # depth_norm = tf.map_fn(lambda x: (x[0] - tf.reduce_min(x[1])) / (tf.reduce_max(x[1]) - tf.reduce_min(x[1])), (tf_depth, foreground), dtype=tf.float32)
+        depthimg_batch = tf.maximum(depth_norm, 0.0)
         depthimg_batch = tf.expand_dims(depthimg_batch, axis=3)  # (B, H, W, 1)
 
         return pncc_batch, normalimg_batch, maskimg_batch, depthimg_batch
@@ -242,8 +262,8 @@ class FaceRecNet:
         R_roll = np.array([[cos(theta), sin(theta), 0],
                        [-sin(theta), cos(theta), 0],
                        [0, 0, 1]])
-
-        R = R_roll.dot(R_yaw.dot(R_pitch))
+        R = np.dot(np.dot(R_pitch, R_yaw), R_roll)
+        # R = R_roll.dot(R_yaw.dot(R_pitch))
         return R.astype(np.float32)
 
     def rotation_matrix_batch(self, angles_batch):
@@ -270,9 +290,9 @@ class FaceRecNet:
         scope_name = 'FineNet'
         with tf.variable_scope(scope_name, scope_name):
             # shape: [batch_size, height, width, channels], channels = 4
-            net_input = tf.concat([self.im_gray, self.coarse_depth_map], axis=3, name='input_data')
+            net_input = tf.concat([self.im_gray, self.coarse_depth_map], axis=3, name='input_data')  # (B, H, W, 2)
             # FineNet
-            net_conv1 = slim.repeat(net_input, 2, slim.conv2d, 64, [3, 3], scope='conv1')
+            net_conv1 = slim.repeat(net_input, 2, slim.conv2d, 64, [3, 3], scope='conv1_1')
             net_pool1 = slim.max_pool2d(net_conv1, [2, 2], scope='pool1')
             net_conv2 = slim.repeat(net_pool1, 2, slim.conv2d, 128, [3, 3], scope='conv2')
             net_pool2 = slim.max_pool2d(net_conv2, [2, 2], scope='pool2')
@@ -297,24 +317,24 @@ class FaceRecNet:
         '''
         with tf.variable_scope('Loss'):
             # pose loss (MSE)
-            pose_pred = tf.slice(self.pred_params, [0, 0], [-1, self.ndim_pose], name='pose_pred')  # (batchsize, ndim_pose)
-            pose_label = tf.slice(self.params_label, [0, 0], [-1, self.ndim_pose], name='pose_label')
+            pose_pred = tf.slice(tf.squeeze(self.pred_params), [0, 0], [-1, self.ndim_pose], name='pose_pred')  # (batchsize, ndim_pose)
+            pose_label = tf.slice(tf.squeeze(self.params_label), [0, 0], [-1, self.ndim_pose], name='pose_label')
             loss_pose = tf.losses.mean_squared_error(pose_label, pose_pred, scope='pose_loss')
             self.losses['pose_loss'] = loss_pose
 
             # geometry loss (GMSE)
-            geometry_pred = tf.slice(self.pred_params, [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_pred')  # (batchsize, ndim_shape + ndim_exp)
-            geometry_label = tf.slice(self.params_label, [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_label')
+            geometry_pred = tf.slice(tf.squeeze(self.pred_params), [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_pred')  # (batchsize, ndim_shape + ndim_exp)
+            geometry_label = tf.slice(tf.squeeze(self.params_label), [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_label')
             geometry_basis = tf.concat([self.pc_shape, self.pc_exp], axis=1, name='geometry_basis')
             loss_geometry = tf.losses.mean_squared_error(tf.matmul(geometry_basis, geometry_label, transpose_b=True),
                                                          tf.matmul(geometry_basis, geometry_pred, transpose_b=True),
                                                          scope='geometry_loss')
             self.losses['geometry_loss'] = loss_geometry
 
-            # Shape from Shading (SfS) loss
-            intensity_recover = self.get_spherical_harmonics_model()
-            loss_sh = tf.losses.mean_squared_error(self.im_gray, intensity_recover, scope='spherical_harmonics_loss')
-            self.losses['spherical_harmonics_loss'] = loss_sh
+            # # Shape from Shading (SfS) loss
+            # intensity_recover = self.get_spherical_harmonics_model()
+            # loss_sh = tf.losses.mean_squared_error(self.im_gray, intensity_recover, scope='spherical_harmonics_loss')
+            # self.losses['spherical_harmonics_loss'] = loss_sh
 
             # fidelity loss of depth map
             loss_fidelity = tf.losses.mean_squared_error(self.coarse_depth_map, self.pred_depth_map, scope='fidelity_loss')
@@ -326,11 +346,12 @@ class FaceRecNet:
             self.losses['smoothness_loss'] = loss_smooth
 
             # final loss function
-            loss = self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
+            # loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
+            loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
             self.losses['total_loss'] = loss
 
             self.scalar_summaries.update(self.losses)
-            return loss
+            return self.losses
 
     
     def laplace_transform(self, x):
@@ -358,8 +379,9 @@ class FaceRecNet:
         tf_vertex = tf.to_float(vertices, name='vertices')  # (B, 3, N)
         tf_triangles = tf.constant(triangles, tf.float32, name='triangles')  # (3, N)
         tf_texture = tf.tile(tf.expand_dims(abedos, axis=0), [self.batch_size, 1, 1], name='texture')  # (B, 3, N)
+        tf_image = tf.tile(self.im_gray, [1, 1, 1, 3], name='image')
         # call TF rendering layer
-        _, tf_abedo, tf_normal, _ = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=self.im_gray)
+        _, tf_abedo, tf_normal, _ = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=tf_image)
 
         abedos_image = tf.reduce_mean(tf.maximum(tf_abedo, 0.0), axis=-1, keep_dims=True)  # (B, H, W, 1)
         mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
@@ -377,6 +399,7 @@ class FaceRecNet:
         Yz0 = tf.transpose(normal_map, [1, 2, 3, 0], name='homo_normals')  # (H, W, 3, B)  from z0
         # here we use the least square estimation (LSE) with data of batchsize to get recovered lighting:
         # LSE equation: l = (Y x Y_T).inv() x Y x (I./mu_tex)_T
+        # TODO: ERROR occured here due to invertible nec.
         Yz0_nec_inv = tf.matrix_inverse(tf.matmul(Yz0, tf.transpose(Yz0, [0, 1, 3, 2])))  # (H, W, 3, 3)
         I = tf.transpose(self.im_gray, [1, 2, 3, 0])  # (H, W, 1, B)
         lighting_lse = tf.matmul(tf.matmul(Yz0_nec_inv, Yz0),
@@ -441,13 +464,15 @@ class FaceRecNet:
         variables = tf.global_variables()
         # Initialize all variables first
         sess.run(tf.variables_initializer(variables, name='init'))
-        variables_to_restore_resv1, variables_to_restore_res16 = self.get_variables_in_ckpt(variables, self.pretrained_resnet_v1, self.pretrained_vgg16)
+        sess.run(tf.local_variables_initializer())
+
+        variables_to_restore_resv1, variables_to_restore_vgg16 = self.get_variables_in_ckpt(variables, self.pretrained_resnet_v1, self.pretrained_vgg16)
 
         # Get the variables to restore Res50
         restorer = tf.train.Saver(variables_to_restore_resv1)
         restorer.restore(sess, self.pretrained_resnet_v1)
         # Get the variables to restore VGG16
-        restorer = tf.train.Saver(variables_to_restore_res16)
+        restorer = tf.train.Saver(variables_to_restore_vgg16)
         restorer.restore(sess, self.pretrained_vgg16)
         print('Loaded.')
 
@@ -460,9 +485,9 @@ class FaceRecNet:
 
     def get_variables_in_ckpt(self, variables, pretrained_resv1, pretrained_vgg16):
         try:
-            reader = pywrap_tensorflow.NewCheckpointReader(pretrained_resv1)
+            reader = tf.train.NewCheckpointReader(pretrained_resv1)
             var_keep_dic_resv1 = reader.get_variable_to_shape_map()
-            reader = pywrap_tensorflow.NewCheckpointReader(pretrained_vgg16)
+            reader = tf.train.NewCheckpointReader(pretrained_vgg16)
             var_keep_dic_vgg16 = reader.get_variable_to_shape_map()
         except Exception as e:  # pylint: disable=broad-except
             print(str(e))
@@ -470,19 +495,54 @@ class FaceRecNet:
                 print("It's likely that your checkpoint file has been compressed "
                       "with SNAPPY.")
 
-        variables_to_restore_resv1 = []
+        variables_to_restore_resv1 = {}
         for v in variables:
-            if v.name.split(':')[0] in var_keep_dic_resv1:
+            vname = v.name.split(':')[0]
+            if ('conv_in' in vname) or ('conv_out' in vname):
+                continue
+            core_vname1, core_vname2 = self.get_core_var_names(vname, 'resnet_v1_101')
+            if core_vname1 in var_keep_dic_resv1:
                 print('Variables restored: %s' % v.name)
-                variables_to_restore_resv1.append(v)
+                variables_to_restore_resv1.update({core_vname1: v})
+            elif core_vname2 in var_keep_dic_resv1:
+                print('Variables restored: %s' % v.name)
+                variables_to_restore_resv1.update({core_vname2: v})
+            else:
+                continue
 
-        variables_to_restore_vgg16 = []
+        variables_to_restore_vgg16 = {}
         for v in variables:
-            if v.name.split(':')[0] in var_keep_dic_vgg16:
+            vname = v.name.split(':')[0]
+            core_vname1, core_vname2 = self.get_core_var_names(vname, 'vgg_16')
+            if core_vname1 in var_keep_dic_vgg16:
                 print('Variables restored: %s' % v.name)
-                variables_to_restore_vgg16.append(v)
+                variables_to_restore_vgg16.update({core_vname1: v})
+            elif core_vname2 in var_keep_dic_vgg16:
+                print('Variables restored: %s' % v.name)
+                variables_to_restore_vgg16.update({core_vname2: v})
+            else:
+                continue
 
         return variables_to_restore_resv1, variables_to_restore_vgg16
+
+
+    def get_core_var_names(self, vname, src_model):
+        if '/' in vname:
+            # at least one '/'
+            p1 = vname.index('/')
+            core_vname1 = src_model + '/' + vname[p1 + 1:]
+            if '/' in vname[p1 + 1:]:
+                # at least two '/'
+                p2 = vname[p1 + 1:].index('/')
+                core_vname2 = src_model + '/' + vname[p1 + 1:][p2 + 1:]
+            else:
+                core_vname2 = core_vname1
+        else:
+            # no '/'
+            core_vname1 = 'resnet_v1_101/' + vname
+            core_vname2 = core_vname1
+        return core_vname1, core_vname2
+
 
 
     def snapshot(self, sess, tf_saver, checkpoints_dir, iter, prefix='FaceRecoNet'):

@@ -90,7 +90,7 @@ def main():
     im = imread(os.path.join(ROOT_PATH, '../samples/face_images/Ana_Ivanovic', '00000045.jpg'))
     im = np.resize(im, [im_size, im_size, 3])
 
-    pose_param, shape_param, exp_param = get_random_params(im_size, ndim_shape, ndim_exp, beta=0.8)
+    pose_param, shape_param, exp_param = get_random_params(im_size, ndim_shape, ndim_exp, beta=1.0)
     phi, gamma, theta, t3d, f = parse_pose_params(pose_param)
     R = rotation_matrix([phi, gamma, theta])
 
@@ -103,6 +103,8 @@ def main():
     
     vertex_proj = np.dot(f * R, vertex) + np.tile(np.expand_dims(t3d, axis=1), [1, nvert])
     vertex_proj[1, :] = im_size - vertex_proj[1, :]
+    # vertex_proj[2, :] = vertex_proj[2, :] - np.min(vertex_proj[2, :])
+    # vertex_proj[2, :] = vertex_proj[2, :] / np.max(vertex_proj[2, :])
     
     # for pncc map
     vertex_proj = vertex_proj.astype(np.float32)
@@ -111,11 +113,16 @@ def main():
     abedo_code = mu_tex.astype(np.float32)
 
     with tf.device("/device:%s:0"%(device)):
-        tf_vertex = tf.Variable(tf.constant(np.expand_dims(vertex_proj,axis=0)))
-        tf_triangles = tf.Variable(tf.constant(tri))
-        tf_tex_pncc = tf.Variable(tf.constant(np.expand_dims(pncc_code,axis=0)))
-        tf_tex_abedo = tf.Variable(tf.constant(np.expand_dims(abedo_code,axis=0)))
-        tf_image =tf.Variable(tf.constant(np.expand_dims(im.astype(np.float32)/255.0,axis=0)))
+        # tf_vertex = tf.Variable(tf.constant(np.expand_dims(vertex_proj,axis=0)))
+        # tf_triangles = tf.Variable(tf.constant(tri))
+        # tf_tex_pncc = tf.Variable(tf.constant(np.expand_dims(pncc_code,axis=0)))
+        # tf_tex_abedo = tf.Variable(tf.constant(np.expand_dims(abedo_code,axis=0)))
+        # tf_image =tf.Variable(tf.constant(np.expand_dims(im.astype(np.float32)/255.0,axis=0)))
+        tf_vertex = tf.constant(np.expand_dims(vertex_proj, axis=0))
+        tf_triangles = tf.constant(tri)
+        tf_tex_pncc = tf.constant(np.expand_dims(pncc_code, axis=0))
+        tf_tex_abedo = tf.constant(np.expand_dims(abedo_code, axis=0))
+        tf_image = tf.constant(np.expand_dims(im.astype(np.float32) / 255.0, axis=0))
 
         t_start = time.time()
         tf_depth, tf_pncc, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex,tri=tf_triangles,texture = tf_tex_pncc,image=tf_image)
@@ -151,13 +158,16 @@ def main():
     depthimg = (depth_buffer - np.min(depth_buffer[ind]))/(np.max(depth_buffer[ind]) - np.min(depth_buffer[ind]))
     depthimg = np.maximum(depthimg, 0.0)*255.0
     # normal image
-    mag_map = np.sum(normal_map**2, axis=2) + 1.0  #(H, W)
-    # zero_ind = (mag_map == 0)
-    # mag_map[zero_ind] = 1.0
-    # normal_map[np.where(normal_map < 0)] = 0.0
-    normal_map = normal_map /np.expand_dims(np.sqrt(mag_map), axis=2)
-    normal_map = np.maximum(normal_map, 0.0)
-    normalimg = (normal_map - np.min(normal_map))/(np.max(normal_map) - np.min(normal_map)) * 255.0
+    flip_ind = (normal_map[:, :, 2] < 0)
+    normal_map[flip_ind] *= -1.0
+    mag_map = np.sum(normal_map**2, axis=2)  #(H, W)
+    zero_ind = (mag_map == 0)
+    mag_map[zero_ind] = 1.0
+    normal_map = normal_map /np.expand_dims(np.sqrt(mag_map), axis=2)  # values range from -1 to 1
+    normalimg  = (normal_map + 1) / 2.0 * 255.0
+    normalimg[zero_ind] = 0.0
+    # normal_map = np.maximum(normal_map, 0.0)
+    # normalimg = (normal_map - np.min(normal_map))/(np.max(normal_map) - np.min(normal_map)) * 255.0
     
     # imsave('test_pncc_tf_%s.png'%(device),np.round(np.clip(pncc_map,0.0,1.0) * 255.0).astype(np.uint8))
     imsave('test_pncc_tf_%s.png' % (device), np.round(pncc_map).astype(np.uint8))

@@ -1,4 +1,5 @@
 .idea/
+*.png
 
 3dmm/*
 data/vggface
@@ -8,13 +9,17 @@ mesh_render/
 nets/*.pyc
 nets/__pycache__
 
+output/
+
 pretrained/*.ckpt
 
+rendering_layer/*.pyc
 rendering_layer/*.png
 rendering_layer/__pycache__
 rendering_layer/ops_src/*.so
 rendering_layer/ops_src/*.o
 rendering_layer/ops_src/*.bk
+rendering_layer/ops_src/*.orig
 
 utils/__pycache__
 utils/*.pyc

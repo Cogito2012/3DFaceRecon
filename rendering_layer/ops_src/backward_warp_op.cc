@@ -32,63 +32,63 @@ void BackwardWarpGrad(const GPUDevice& d,
 
 class BackwardWarpOp : public OpKernel {
 public:
-  explicit BackwardWarpOp(OpKernelConstruction* context) : OpKernel(context) {}
+    explicit BackwardWarpOp(OpKernelConstruction* context) : OpKernel(context) {}
 
-  void Compute(OpKernelContext* context) override {
-    const Tensor& input_images = context->input(0);
-    const Tensor& input_flows = context->input(1);
+    void Compute(OpKernelContext* context) override {
+        const Tensor& input_images = context->input(0);
+        const Tensor& input_flows = context->input(1);
 
-    Tensor* output_images = NULL;
-    OP_REQUIRES_OK(context, context->allocate_output(0, input_images.shape(),
-                                                     &output_images));
+        Tensor* output_images = NULL;
+        OP_REQUIRES_OK(context, context->allocate_output(0, input_images.shape(),
+                       &output_images));
 
-    typename TTypes<float, 4>::ConstTensor image_data = input_images.tensor<float, 4>();
-    typename TTypes<float, 4>::ConstTensor flow_data = input_flows.tensor<float, 4>();
-    typename TTypes<float, 4>::Tensor output_data = output_images->tensor<float, 4>();
+        typename TTypes<float, 4>::ConstTensor image_data = input_images.tensor<float, 4>();
+        typename TTypes<float, 4>::ConstTensor flow_data = input_flows.tensor<float, 4>();
+        typename TTypes<float, 4>::Tensor output_data = output_images->tensor<float, 4>();
 
-    BackwardWarp(context->eigen_device<GPUDevice>(),
-                 image_data, flow_data, output_data);
-  }
+        BackwardWarp(context->eigen_device<GPUDevice>(),
+                     image_data, flow_data, output_data);
+    }
 };
 
 class BackwardWarpOpGrad : public OpKernel {
 public:
-  explicit BackwardWarpOpGrad(OpKernelConstruction* context) : OpKernel(context) {}
+    explicit BackwardWarpOpGrad(OpKernelConstruction* context) : OpKernel(context) {}
 
-  void Compute(OpKernelContext* context) override {
-    const Tensor& input = context->input(0);
-    const Tensor& original_images = context->input(1);
-    const Tensor& original_flows = context->input(2);
+    void Compute(OpKernelContext* context) override {
+        const Tensor& input = context->input(0);
+        const Tensor& original_images = context->input(1);
+        const Tensor& original_flows = context->input(2);
 
-    Tensor* output = NULL;
-    OP_REQUIRES_OK(context, context->allocate_output(0, original_flows.shape(),
-                                                     &output));
+        Tensor* output = NULL;
+        OP_REQUIRES_OK(context, context->allocate_output(0, original_flows.shape(),
+                       &output));
 
-    typename TTypes<float, 4>::ConstTensor input_data = input.tensor<float, 4>();
-    typename TTypes<float, 4>::ConstTensor flow_data = original_flows.tensor<float, 4>();
-    typename TTypes<float, 4>::ConstTensor image_data = original_images.tensor<float, 4>();
-    typename TTypes<float, 4>::Tensor output_data = output->tensor<float, 4>();
+        typename TTypes<float, 4>::ConstTensor input_data = input.tensor<float, 4>();
+        typename TTypes<float, 4>::ConstTensor flow_data = original_flows.tensor<float, 4>();
+        typename TTypes<float, 4>::ConstTensor image_data = original_images.tensor<float, 4>();
+        typename TTypes<float, 4>::Tensor output_data = output->tensor<float, 4>();
 
-    BackwardWarpGrad(context->eigen_device<GPUDevice>(),
-                     input_data, image_data, flow_data, output_data);
-  }
+        BackwardWarpGrad(context->eigen_device<GPUDevice>(),
+                         input_data, image_data, flow_data, output_data);
+    }
 };
 
 REGISTER_OP("BackwardWarp")
-  .Input("images: float")
-  .Input("flows: float")
-  .Output("warped_images: float")
-  .SetShapeFn(shape_inference::UnchangedShape);
+.Input("images: float")
+.Input("flows: float")
+.Output("warped_images: float")
+.SetShapeFn(shape_inference::UnchangedShape);
 
 REGISTER_OP("BackwardWarpGrad")
-  .Input("grads: float")
-  .Input("original_images: float")
-  .Input("original_flows: float")
-  .Output("output: float")
-  .SetShapeFn([](shape_inference::InferenceContext* c) {
+.Input("grads: float")
+.Input("original_images: float")
+.Input("original_flows: float")
+.Output("output: float")
+.SetShapeFn([](shape_inference::InferenceContext* c) {
     c->set_output(0, c->input(2));
     return Status::OK();
-  });
+});
 
 #if GOOGLE_CUDA
 

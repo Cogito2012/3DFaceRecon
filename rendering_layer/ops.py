@@ -93,7 +93,7 @@ forward_warp = _forward_warp_module.forward_warp
 # Register op gradients
 ###TODO: Wentao added the backward function of RenderDepth
 @ops.RegisterGradient("RenderDepth")
-def _RenderDepthGrad(op, depth_grad, tri_ind_grad):
+def _RenderDepthGrad(op, depth_grad, texture_image_grad, normal_grad, tri_ind_grad):
     ###TODO: vertex has gradients, tri dose not have gradients
     grad0 = _render_depth_module.render_depth_grad(
         depth_grad, op.inputs[0], op.inputs[1], ## depth_grad, vertex, tri
@@ -105,7 +105,7 @@ def _RenderDepthGrad(op, depth_grad, tri_ind_grad):
     )
 
     ###TODO: tri has no gradients
-    return [grad0,None]
+    return [grad0,None,None,None]
 
 
 @ops.RegisterGradient("BackwardWarp")

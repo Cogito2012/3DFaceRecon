@@ -1,7 +1,7 @@
 import tensorflow as tf
 from nets.network import FaceRecNet
 import time
-import os
+import os, sys
 import logging
 import argparse
 import utils.parser_3dmm as parser_3dmm
@@ -10,6 +10,7 @@ import utils.data_process as data_process
 import scipy.io as sio
 import numpy as np
 from utils.timer import Timer
+from tensorflow.python import debug as tf_debug
 
 ROOT_PATH = os.path.dirname(__file__)
 
@@ -56,15 +57,15 @@ def test_generator(batch_size, img_size):
 def train_model(sess):
     # checkpoint files dir
     checkpoints_dir = os.path.join(ROOT_PATH, p.output_path, "checkpoints")
-    if os.path.exists(checkpoints_dir):
+    if not os.path.exists(checkpoints_dir):
         os.makedirs(checkpoints_dir)
     ckpt_prefix = 'FaceReconNet'
     # tensorboard dirs
     tb_train_dir = os.path.join(ROOT_PATH, p.output_path, 'tensorboard', 'train')
     tb_val_dir = os.path.join(ROOT_PATH, p.output_path, 'tensorboard', 'val')
-    if os.path.exists(tb_train_dir):
+    if not os.path.exists(tb_train_dir):
         os.makedirs(tb_train_dir)
-    if os.path.exists(tb_val_dir):
+    if not os.path.exists(tb_val_dir):
         os.makedirs(tb_val_dir)
 
     # read basic params from 3dmm facial model
@@ -72,13 +73,12 @@ def train_model(sess):
     mesh_data_3dmm = parser_3dmm.read_3dmm_model(mesh_data_path)
     ndim_params = mesh_data_3dmm['ndim_pose'] + mesh_data_3dmm['ndim_shape'] + mesh_data_3dmm['ndim_exp']
 
-    graph = tf.Graph()
-    with graph.as_default():
+    with sess.graph.as_default():
         # Set the random seed for tensorflow
         tf.set_random_seed(12345)
 
         grayimg_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, p.image_size, p.image_size, 1], name='im_gray')
-        labels_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, ndim_params], name='im_gray')
+        labels_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, 1, 1, ndim_params], name='im_gray')
         # initialize Face Reconstruction Model
         face_recnet = FaceRecNet(
             im_gray=grayimg_placeholder,
@@ -93,20 +93,21 @@ def train_model(sess):
         pred_depth_map = face_recnet.build()
 
         # construct loss
-        loss = face_recnet.get_loss()
+        losses = face_recnet.get_loss()
 
         # add summaries
         summary_op, summary_op_val = face_recnet.add_summaries()
-
+        # optimizer = tf.train.GradientDescentOptimizer(learning_rate=p.base_lr)
         # construct optimizer
         optimizer = tf.train.AdamOptimizer(learning_rate=p.base_lr, name='Adam')
-        gvs = optimizer.compute_gradients(loss)
-        train_op = optimizer.apply_gradients(gvs)
+        train_op = optimizer.minimize(losses['total_loss'])
+        # gvs = optimizer.compute_gradients(loss)
+        # train_op = optimizer.apply_gradients(gvs)
 
         # prepare saver and writer
         tf_saver = tf.train.Saver(max_to_keep=100000)
         # Write the train and validation information to tensorboard
-        tf_train_writer = tf.summary.FileWriter(tb_train_dir, graph)
+        tf_train_writer = tf.summary.FileWriter(tb_train_dir, sess.graph)
         tf_val_writer = tf.summary.FileWriter(tb_val_dir)
 
         # construct a data generator
@@ -122,24 +123,24 @@ def train_model(sess):
         while iter < p.max_iters + 1:
             timer.tic()
             # Get training data, one batch at a time
-            train_images, train_labels = traindata_generator.next()
+            train_images, train_labels = next(traindata_generator)
             # train step
             feed_dict = {grayimg_placeholder: train_images,
                          labels_placeholder: train_labels}
-            pose_loss, geometry_loss, sh_loss, fidelity_loss, smoothness_loss, total_loss, summary, _ = sess.run(
-                [loss['pose_loss'], loss['geometry_loss'],
-                 loss['spherical_harmonics_loss'], loss['fidelity_loss'], loss['smoothness_loss'],
-                 loss['total_loss'],
+            pose_loss, geometry_loss, fidelity_loss, smoothness_loss, total_loss, summary, _ = sess.run(
+                [losses['pose_loss'], losses['geometry_loss'],
+                 losses['fidelity_loss'], losses['smoothness_loss'],
+                 losses['total_loss'],
                  summary_op, train_op],
                 feed_dict=feed_dict)
             # add train summaries
             tf_train_writer.add_summary(summary, float(iter))
 
             # validatation
-            val_images, val_labels = valdata_generator.next()
+            val_images, val_labels = next(valdata_generator)
             feed_dict = {grayimg_placeholder: val_images,
                          labels_placeholder: val_labels}
-            total_loss_val, summary_val = sess.run([loss['total_loss'], summary_op_val], feed_dict=feed_dict)
+            total_loss_val, summary_val = sess.run([losses['total_loss'], summary_op_val], feed_dict=feed_dict)
             # add val summaries
             tf_val_writer.add_summary(summary_val, float(iter))
             timer.toc()
@@ -149,11 +150,11 @@ def train_model(sess):
                 print('--------------------------- iter: %d / %d, total loss: %.6f ---------------------------' % (
                 iter, p.max_iters, total_loss))
                 print(' --- loss_pose: %.6f,                --- loss_geometry: %.6f\n'
-                      ' --- loss_spherical_harmonics: %.6f, --- loss_fidelity: %.6f\n'
-                      ' --- loss_smoothness: %.6f,          --- loss_total (train/val): %.6f / (%.6f)\n'
+                      ' --- loss_fidelity: %.6f             --- loss_smoothness: %.6f\n'
+                      ' --- loss_total (train/val): %.6f / (%.6f)\n'
                       % (pose_loss, geometry_loss,
-                         sh_loss, fidelity_loss,
-                         smoothness_loss, total_loss, total_loss_val))
+                         fidelity_loss, smoothness_loss,
+                         total_loss, total_loss_val))
                 print(' --- speed: {:.3f}s / iter'.format(timer.average_time))
 
             # Snapshotting
@@ -191,7 +192,7 @@ if __name__ == '__main__':
     parser.add_argument('--nIter', type=int, default=4, help='The number of iteration for CoarseNet.')
     parser.add_argument('--max_iters', type=int, default=70000, help='The number of iterations for training process.')
     parser.add_argument('--image_size', type=int, default=200, help='The input image size.')
-    parser.add_argument('--batch_size', type=int, default=64, help='The batchsize in the training and evaluation.')
+    parser.add_argument('--batch_size', type=int, default=4, help='The batchsize in the training and evaluation.')
     parser.add_argument('--base_lr', type=float, default=1e-3, help='The base learning rate.')
     parser.add_argument('--ckpt_file', default=None, help='The weights file in the snapshot directory for training recovery.')
     parser.add_argument('--display', type=int, default=10, help='The display intervals for training.')
