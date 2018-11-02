@@ -127,12 +127,18 @@ def train_model(sess):
             # train step
             feed_dict = {grayimg_placeholder: train_images,
                          labels_placeholder: train_labels}
-            pose_loss, geometry_loss, fidelity_loss, smoothness_loss, total_loss, summary, _ = sess.run(
+            pose_loss, geometry_loss, total_loss, summary, _ = sess.run(
                 [losses['pose_loss'], losses['geometry_loss'],
-                 losses['fidelity_loss'], losses['smoothness_loss'],
+                 # losses['fidelity_loss'], losses['smoothness_loss'],
                  losses['total_loss'],
                  summary_op, train_op],
                 feed_dict=feed_dict)
+            # pose_loss, geometry_loss, fidelity_loss, smoothness_loss, total_loss, summary, _ = sess.run(
+            #     [losses['pose_loss'], losses['geometry_loss'],
+            #      losses['fidelity_loss'], losses['smoothness_loss'],
+            #      losses['total_loss'],
+            #      summary_op, train_op],
+            #     feed_dict=feed_dict)
             # add train summaries
             tf_train_writer.add_summary(summary, float(iter))
 
@@ -150,15 +156,15 @@ def train_model(sess):
                 print('--------------------------- iter: %d / %d, total loss: %.6f ---------------------------' % (
                 iter, p.max_iters, total_loss))
                 print(' --- loss_pose: %.6f,                --- loss_geometry: %.6f\n'
-                      ' --- loss_fidelity: %.6f             --- loss_smoothness: %.6f\n'
-                      ' --- loss_total (train/val): %.6f / (%.6f)\n'
+                      # ' --- loss_fidelity: %.6f             --- loss_smoothness: %.6f\n'
+                      ' --- loss_total (train/val): %.6f / (%.6f)'
                       % (pose_loss, geometry_loss,
-                         fidelity_loss, smoothness_loss,
+                         # fidelity_loss, smoothness_loss,
                          total_loss, total_loss_val))
                 print(' --- speed: {:.3f}s / iter'.format(timer.average_time))
 
             # Snapshotting
-            if iter % p.snapshot_iters == 0:
+            if iter % p.snapshot_iters == 0 and iter > 0:
                 last_snapshot_iter = iter
                 ss_path, np_path = face_recnet.snapshot(sess, tf_saver, checkpoints_dir, iter, prefix=ckpt_prefix)
                 np_paths.append(np_path)

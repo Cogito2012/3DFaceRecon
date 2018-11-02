@@ -135,7 +135,7 @@ class FaceRecNet:
 
     def vertices_transform(self, pred_params):
         # parse geometry and pose parameters from prediction
-        pred_params = tf.squeeze(pred_params)  # (B, d)
+        pred_params = tf.squeeze(pred_params, [1, 2])  # (B, d)
         pose_params = tf.slice(pred_params, [0, 0], [-1, self.ndim_pose], name='pred_pose_params')  # (B, ndim_pose)
         shape_params = tf.slice(pred_params, [0, self.ndim_pose], [-1, self.ndim_shape], name='pred_shape_params')  # (B, ndim_shape)
         exp_params = tf.slice(pred_params, [0, self.ndim_pose + self.ndim_shape], [-1, self.ndim_exp], name='pred_exp_params') # (B, ndim_exp)
@@ -198,7 +198,7 @@ class FaceRecNet:
         maskimg_batch = mask * self.im_gray
 
         # 4. depth image result
-        tf_depth = tf.squeeze(tf_depth)  # (B, H, W)
+        tf_depth = tf.squeeze(tf_depth, axis=3)  # (B, H, W)
         def foreground_normalization(depth_map):
             foreground = tf.gather_nd(depth_map, tf.where(depth_map > 0.0))
             return (depth_map - tf.reduce_min(foreground)) / (tf.reduce_max(foreground) - tf.reduce_min(foreground))
@@ -317,14 +317,14 @@ class FaceRecNet:
         '''
         with tf.variable_scope('Loss'):
             # pose loss (MSE)
-            pose_pred = tf.slice(tf.squeeze(self.pred_params), [0, 0], [-1, self.ndim_pose], name='pose_pred')  # (batchsize, ndim_pose)
-            pose_label = tf.slice(tf.squeeze(self.params_label), [0, 0], [-1, self.ndim_pose], name='pose_label')
+            pose_pred = tf.slice(tf.squeeze(self.pred_params, [1, 2]), [0, 0], [-1, self.ndim_pose], name='pose_pred')  # (batchsize, ndim_pose)
+            pose_label = tf.slice(tf.squeeze(self.params_label, [1, 2]), [0, 0], [-1, self.ndim_pose], name='pose_label')
             loss_pose = tf.losses.mean_squared_error(pose_label, pose_pred, scope='pose_loss')
             self.losses['pose_loss'] = loss_pose
 
             # geometry loss (GMSE)
-            geometry_pred = tf.slice(tf.squeeze(self.pred_params), [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_pred')  # (batchsize, ndim_shape + ndim_exp)
-            geometry_label = tf.slice(tf.squeeze(self.params_label), [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_label')
+            geometry_pred = tf.slice(tf.squeeze(self.pred_params, [1, 2]), [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_pred')  # (batchsize, ndim_shape + ndim_exp)
+            geometry_label = tf.slice(tf.squeeze(self.params_label, [1, 2]), [0, self.ndim_pose], [-1, self.ndim_shape + self.ndim_exp], name='geometry_label')
             geometry_basis = tf.concat([self.pc_shape, self.pc_exp], axis=1, name='geometry_basis')
             loss_geometry = tf.losses.mean_squared_error(tf.matmul(geometry_basis, geometry_label, transpose_b=True),
                                                          tf.matmul(geometry_basis, geometry_pred, transpose_b=True),
@@ -341,13 +341,14 @@ class FaceRecNet:
             self.losses['fidelity_loss'] = loss_fidelity
 
             # smoothness loss of depth map
-            filtered_depth = tf.map_fn(lambda x: self.laplace_transform(x), tf.squeeze(self.pred_depth_map), dtype=tf.float32, name='laplacian_smoothing')
+            filtered_depth = tf.map_fn(lambda x: self.laplace_transform(x), tf.squeeze(self.pred_depth_map, axis=3), dtype=tf.float32, name='laplacian_smoothing')
             loss_smooth = tf.contrib.layers.l1_regularizer(1.0)(filtered_depth)
             self.losses['smoothness_loss'] = loss_smooth
 
             # final loss function
             # loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
-            loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
+            # loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
+            loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry
             self.losses['total_loss'] = loss
 
             self.scalar_summaries.update(self.losses)
