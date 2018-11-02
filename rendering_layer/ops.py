@@ -97,7 +97,7 @@ def _RenderDepthGrad(op, depth_grad, texture_image_grad, normal_grad, tri_ind_gr
     ###TODO: vertex has gradients, tri dose not have gradients
     grad0 = _render_depth_module.render_depth_grad(
         depth_grad, op.inputs[0], op.inputs[1], ## depth_grad, vertex, tri
-        op.outputs[0],op.outputs[1],op.inputs[2]  ## depth, tri_ind
+        op.outputs[0],op.outputs[3],op.inputs[3]  ## depth, tri_ind
         # nver=op.get_attr('nver'),
         # ntri=op.get_attr('ntri'),
         # width = op.get_attr('width'),

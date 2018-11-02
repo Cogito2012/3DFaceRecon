@@ -243,7 +243,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default='vggface', help='The dataset name or folder name of training data.')
     parser.add_argument('--phase', default='train', choices=['train', 'test'], help=['The phase of running.'])
-    parser.add_argument('--nIter', type=int, default=1, help='The number of iteration for CoarseNet.')
+    parser.add_argument('--nIter', type=int, default=4, help='The number of iteration for CoarseNet.')
     parser.add_argument('--max_iters', type=int, default=70000, help='The number of iterations for training process.')
     parser.add_argument('--image_size', type=int, default=200, help='The input image size.')
     parser.add_argument('--batch_size', type=int, default=4, help='The batchsize in the training and evaluation.')
