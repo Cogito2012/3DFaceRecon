@@ -83,18 +83,20 @@ class FaceRecNet:
                             trainable=is_training):
             # CoarseNet
             self.build_coarse_net()
-            self.histogram_summaries.update({'pred_params': self.pred_params})
+            if is_training:
+                self.histogram_summaries.update({'pred_params': self.pred_params})
+
             # Rendering Layer
             self.depth_rendering_layer()
-            self.image_summaries.update({'pncc_map': self.pncc_batch,
-                                        'mask_im': self.maskimg_batch,
-                                        'normal_map': self.normal_batch,
-                                        'coarse_depth': self.coarse_depth_map})
+            if is_training:
+                self.image_summaries.update({'pncc_map': self.pncc_batch,
+                                            'mask_im': self.maskimg_batch,
+                                            'normal_map': self.normal_batch,
+                                            'coarse_depth': self.coarse_depth_map})
             # FineNet
             self.build_fine_net()
-            self.image_summaries.update({'fine_depth': self.pred_depth_map})
-
-        return self.pred_depth_map
+            if is_training:
+                self.image_summaries.update({'fine_depth': self.pred_depth_map})
 
 
 
@@ -478,10 +480,9 @@ class FaceRecNet:
         print('Loaded.')
 
         # Initial file lists are empty
-        np_paths = []
         ss_paths = []
         last_snapshot_iter = 0
-        return last_snapshot_iter, np_paths, ss_paths
+        return last_snapshot_iter, ss_paths
 
 
     def get_variables_in_ckpt(self, variables, pretrained_resv1, pretrained_vgg16):
@@ -552,14 +553,15 @@ class FaceRecNet:
         filename = os.path.join(checkpoints_dir, filename)
         tf_saver.save(sess, filename)
         print('Wrote snapshot to: {:s}'.format(filename))
+        return filename
 
 
-    def remove_snapshot(self, np_paths, ss_paths, keep=5):
-        to_remove = len(np_paths) -keep
+    def remove_snapshot(self, ss_paths, keep=5):
+        to_remove = len(ss_paths) -keep
         for c in range(to_remove):
-            nfile = np_paths[0]
-            os.remove(str(nfile))
-            np_paths.remove(nfile)
+            filename = ss_paths[0]
+            os.remove(str(filename))
+            ss_paths.remove(filename)
 
         to_remove = len(ss_paths) - keep
         for c in range(to_remove):

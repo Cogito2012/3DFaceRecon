@@ -112,25 +112,29 @@ def main():
     pncc_code = vertex_code.astype(np.float32)
     abedo_code = mu_tex.astype(np.float32)
 
+
     with tf.device("/device:%s:0"%(device)):
-        # tf_vertex = tf.Variable(tf.constant(np.expand_dims(vertex_proj,axis=0)))
-        # tf_triangles = tf.Variable(tf.constant(tri))
-        # tf_tex_pncc = tf.Variable(tf.constant(np.expand_dims(pncc_code,axis=0)))
-        # tf_tex_abedo = tf.Variable(tf.constant(np.expand_dims(abedo_code,axis=0)))
+        tf_vertex = tf.Variable(tf.constant(np.expand_dims(vertex_proj,axis=0)))
+        tf_triangles = tf.Variable(tf.constant(tri))
+        tf_tex_pncc = tf.Variable(tf.constant(np.expand_dims(pncc_code,axis=0)))
+        tf_tex_abedo = tf.Variable(tf.constant(np.expand_dims(abedo_code,axis=0)))
         # tf_image =tf.Variable(tf.constant(np.expand_dims(im.astype(np.float32)/255.0,axis=0)))
-        tf_vertex = tf.constant(np.expand_dims(vertex_proj, axis=0))
-        tf_triangles = tf.constant(tri)
-        tf_tex_pncc = tf.constant(np.expand_dims(pncc_code, axis=0))
-        tf_tex_abedo = tf.constant(np.expand_dims(abedo_code, axis=0))
+        # tf_vertex = tf.constant(np.expand_dims(vertex_proj, axis=0))
+        # tf_triangles = tf.constant(tri)
+        # tf_tex_pncc = tf.constant(np.expand_dims(pncc_code, axis=0))
+        # tf_tex_abedo = tf.constant(np.expand_dims(abedo_code, axis=0))
         tf_image = tf.constant(np.expand_dims(im.astype(np.float32) / 255.0, axis=0))
 
         t_start = time.time()
         tf_depth, tf_pncc, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex,tri=tf_triangles,texture = tf_tex_pncc,image=tf_image)
         t_graph = time.time() - t_start
 
-        tf_depth, tf_abedo, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_tex_abedo,
-                                                               image=tf_image)
+        # TODO: A second call
+        # tf_depth, tf_abedo, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_tex_abedo,
+        #                                                        image=tf_image)
 
+        optimizer = tf.train.AdamOptimizer(learning_rate=0.001)
+        train_op = optimizer.minimize(tf.losses.mean_squared_error(tf_pncc, tf_image))
         # must init the vertex and tri before depth.eval()
         init_g = tf.global_variables_initializer()
         init_l = tf.local_variables_initializer()
@@ -140,6 +144,9 @@ def main():
             sess.run(init_l)
 
             t_start = time.time()
+            # _ = sess.run([train_op])  # ERROR disapeared only if the second call of render_depth() is removed .....
+            _ = sess.run([tf_pncc])     # Always normal running
+
             tf_depth_value,tf_pncc_value, tf_normal, tf_abedo_value, tf_tri_ind_value = sess.run([tf_depth, tf_pncc, tf_normal, tf_abedo, tf_tri_ind])
             t_run = time.time() - t_start
 

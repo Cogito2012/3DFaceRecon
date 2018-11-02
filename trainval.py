@@ -1,57 +1,14 @@
 import tensorflow as tf
 from nets.network import FaceRecNet
-import time
-import os, sys
-import logging
+import os
 import argparse
 import utils.parser_3dmm as parser_3dmm
-import utils.listfile_reader as file_reader
-import utils.data_process as data_process
-import scipy.io as sio
-import numpy as np
+from utils.data_process import trainval_generator, test_generator
 from utils.timer import Timer
-from tensorflow.python import debug as tf_debug
+import cv2
 
 ROOT_PATH = os.path.dirname(__file__)
 
-def trainval_generator(batch_size, img_size, label_dim, phase='train'):
-    '''The data generator to fetch a batch of images and labels from disk
-
-    :param batch_size:
-    :param img_size:
-    :param label_dim:
-    :param phase:
-    :return:
-    '''
-    dataset_path = os.path.join(ROOT_PATH, 'data', 'vggface')
-    if phase == 'train':
-        image_files, label_files = file_reader.read_listfile_trainval(dataset_path, 'train_list.txt')
-    elif phase == 'val':
-        image_files, label_files = file_reader.read_listfile_trainval(dataset_path, 'val_list.txt')
-    else:
-        raise NotImplementedError
-
-    counter = 0
-    while True:
-        yield data_process.prepare_input_image(image_files[counter:counter + batch_size], batch_size, img_size), \
-              data_process.prepare_input_label(label_files[counter:counter + batch_size], batch_size, label_dim)
-        counter = (counter + batch_size) % len(image_files)
-
-
-def test_generator(batch_size, img_size):
-    '''The data generator to fetch a batch of test images from disk
-
-    :param batch_size:
-    :param img_size:
-    :return:
-    '''
-    dataset_path = os.path.join(ROOT_PATH, 'data', 'vggface')
-    image_files = file_reader.read_listfile_test(dataset_path, 'test_list.txt')
-
-    counter = 0
-    while True:
-        yield data_process.prepare_input_image(image_files[counter:counter + batch_size], batch_size, img_size)
-        counter = (counter + batch_size) % len(image_files)
 
 
 def train_model(sess):
@@ -90,7 +47,7 @@ def train_model(sess):
             weight_decay=1e-4
         )
         # build up computational graph
-        pred_depth_map = face_recnet.build()
+        face_recnet.build()
 
         # construct loss
         losses = face_recnet.get_loss()
@@ -112,11 +69,12 @@ def train_model(sess):
 
         # construct a data generator
         img_size = [p.image_size, p.image_size]
-        traindata_generator = trainval_generator(p.batch_size, img_size, ndim_params, phase='train')
-        valdata_generator = trainval_generator(p.batch_size, img_size, ndim_params, phase='val')
-
+        traindata_generator = trainval_generator(p.batch_size, img_size, ndim_params,
+                                                 dataset=p.dataset, img_mean=face_recnet.gray_mean, phase='train')
+        valdata_generator = trainval_generator(p.batch_size, img_size, ndim_params,
+                                                 dataset=p.dataset, img_mean=face_recnet.gray_mean, phase='val')
         # initialize all models
-        last_snapshot_iter, np_paths, ss_paths = face_recnet.initialize_models(sess)
+        last_snapshot_iter, ss_paths = face_recnet.initialize_models(sess)
 
         timer = Timer()
         iter = 0 # We always start with the initial time point
@@ -127,6 +85,7 @@ def train_model(sess):
             # train step
             feed_dict = {grayimg_placeholder: train_images,
                          labels_placeholder: train_labels}
+            # Only train the CoarseNet due the unresolved bug in rendering layer
             pose_loss, geometry_loss, total_loss, summary, _ = sess.run(
                 [losses['pose_loss'], losses['geometry_loss'],
                  # losses['fidelity_loss'], losses['smoothness_loss'],
@@ -166,13 +125,12 @@ def train_model(sess):
             # Snapshotting
             if iter % p.snapshot_iters == 0 and iter > 0:
                 last_snapshot_iter = iter
-                ss_path, np_path = face_recnet.snapshot(sess, tf_saver, checkpoints_dir, iter, prefix=ckpt_prefix)
-                np_paths.append(np_path)
+                ss_path = face_recnet.snapshot(sess, tf_saver, checkpoints_dir, iter, prefix=ckpt_prefix)
                 ss_paths.append(ss_path)
 
                 # Remove the old snapshots if there are too many
-                if len(np_paths) > 5:
-                    face_recnet.remove_snapshot(np_paths, ss_paths ,keep=5)
+                if len(ss_paths) > 5:
+                    face_recnet.remove_snapshot(ss_paths ,keep=5)
             iter += 1
 
         if last_snapshot_iter != iter - 1:
@@ -180,33 +138,120 @@ def train_model(sess):
         tf_train_writer.close()
         tf_val_writer.close()
 
-def train():
 
+def get_weight_file(model_wieghts):
+    ''' Get the weight file from specific filename or from the checkpoint dirs if not specified
+
+    :param model_wieghts: filename str or None
+    :return:
+    '''
+    if p.model_wieghts:
+        checkpoints_file = os.path.join(ROOT_PATH, model_wieghts)
+        if not os.path.exists(checkpoints_file):
+            raise FileNotFoundError
+    else:
+        checkpoints_dir = os.path.join(ROOT_PATH, p.output_path, "checkpoints")
+        if not os.path.exists(checkpoints_dir):
+            raise FileNotFoundError
+        else:
+            ckpt_files = os.listdir(checkpoints_dir)
+            ckpt_files.sort()
+            checkpoints_file = os.path.join(checkpoints_dir, ckpt_files[-1])
+    return checkpoints_file
+
+
+def eval_model(sess):
+    # checkpoint files dir
+    checkpoints_file = get_weight_file(p.model_wieghts)
+
+    # prepare evaluation result directory
+    eval_dir = os.path.join(ROOT_PATH, p.output_path, 'evaluation')
+    eval_depth_dir = os.path.join(eval_dir, 'depth')
+    if not os.path.exists(eval_depth_dir):
+        os.makedirs(eval_depth_dir)
+
+    # read basic params from 3dmm facial model
+    mesh_data_path = os.path.join(ROOT_PATH, '3dmm')
+    mesh_data_3dmm = parser_3dmm.read_3dmm_model(mesh_data_path)
+
+    with sess.graph.as_default():
+        # the place holder for single image input
+        grayimg_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, p.image_size, p.image_size, 1], name='im_gray')
+
+        # initialize Face Reconstruction Model
+        face_recnet = FaceRecNet(
+            im_gray=grayimg_placeholder,
+            mesh_data=mesh_data_3dmm,
+            nIter=p.nIter,
+            batch_size=p.batch_size,
+            im_size=p.image_size
+        )
+        # build up computational graph
+        face_recnet.build(is_training=False)
+
+        print(('Loading model check point from {:s}').format(checkpoints_file))
+        saver = tf.train.Saver()
+        saver.restore(sess, checkpoints_file)
+        print('Loaded.')
+
+        img_size = [p.image_size, p.image_size]
+        testdata_generator = test_generator(p.batch_size, img_size, dataset=p.dataset, img_mean=face_recnet.gray_mean)
+        batch_id = 0
+        timer = Timer()
+        while True:
+            try:
+                timer.tic()
+                test_images, image_files = next(testdata_generator)
+                pred_depth = sess.run(face_recnet.pred_depth_map, feed_dict={grayimg_placeholder: test_images})
+                depth_images = pred_depth * 255.0
+                # prepare output results
+                for filename, depth_im in zip(image_files, depth_images):
+                    obj_id = os.path.splitext(filename)[0].split('/')[-2]
+                    file_id = os.path.splitext(filename)[0].split('/')[-1]
+                    result_depth_file = os.path.join(eval_depth_dir, obj_id + '_' + file_id + '.jpg')
+                    cv2.imwrite(result_depth_file, depth_im)
+                    # TODO: Load ground truth for quantitivity evaluation of 3D facial depth
+                    #
+                batch_id += 1
+                timer.toc()
+                print('process test data batch: %d, speed: %.3f s per batch.'% (batch_id, timer.average_time))
+            except StopIteration:
+                break
+
+        print('Done!')
+
+
+
+
+def trainval(phase):
+    '''Entry function for training or evaluation
+
+    :param phase:
+    :return:
+    '''
     tfconfig = tf.ConfigProto(allow_soft_placement=True)
     tfconfig.gpu_options.allow_growth = True
     with tf.Session(config=tfconfig) as sess:
-        train_model(sess)
+        if phase == 'train':
+            train_model(sess)
+        if phase == 'test':
+            eval_model(sess)
+    sess.close()
 
-def test():
-    '''TODO'''
-    pass
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_path', default='data/VGGFace/vgg_face_dataset', help='The directory of training data.')
+    parser.add_argument('--dataset', default='vggface', help='The dataset name or folder name of training data.')
     parser.add_argument('--phase', default='train', choices=['train', 'test'], help=['The phase of running.'])
-    parser.add_argument('--nIter', type=int, default=4, help='The number of iteration for CoarseNet.')
+    parser.add_argument('--nIter', type=int, default=1, help='The number of iteration for CoarseNet.')
     parser.add_argument('--max_iters', type=int, default=70000, help='The number of iterations for training process.')
     parser.add_argument('--image_size', type=int, default=200, help='The input image size.')
     parser.add_argument('--batch_size', type=int, default=4, help='The batchsize in the training and evaluation.')
     parser.add_argument('--base_lr', type=float, default=1e-3, help='The base learning rate.')
-    parser.add_argument('--ckpt_file', default=None, help='The weights file in the snapshot directory for training recovery.')
+    parser.add_argument('--model_wieghts', default=None, help='The weights file in the snapshot directory for evaluation.')
     parser.add_argument('--display', type=int, default=10, help='The display intervals for training.')
     parser.add_argument('--snapshot_iters', type=int, default=1000, help='The number of iterations to snapshot trained model.')
     parser.add_argument('--output_path', default='./output', help='The path to save output results.')
     p = parser.parse_args()
 
-    if p.phase == 'train':
-        train()
-    if p.phase == 'test':
-        test()
+    trainval(p.phase)

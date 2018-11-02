@@ -336,6 +336,7 @@ void RenderDepth(const GPUDevice& d,
     cudaFree(point2);
     cudaFree(point3);
     cudaFree(h);
+    cudaFree(tritex);
     cudaFree(tri_normal);
 }
 

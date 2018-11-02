@@ -9,7 +9,7 @@ sudo rm -rf ./output/*
 
 CUDA_VISIABLE_DEVICES=0 python trainval.py \
 	--nIter 1 \
-	--batch_size 4
+	--batch_size 16
 
 
 

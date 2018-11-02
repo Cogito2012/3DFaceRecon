@@ -26,5 +26,7 @@ utils/*.pyc
 
 zbuffer_render/
 
+multi_rendering_layer/*
+
 
 
