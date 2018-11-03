@@ -72,7 +72,7 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 	cd ..
 
 	```
-Make sure no errors happened in this compiling process and the file `render_depth.so` is generated under the folder `./rendering_layer/ops_src/`
+    Make sure no errors happened in this compiling process and the file `render_depth.so` is generated under the folder `./rendering_layer/ops_src/`
 
 2. Simple Test. You can use the provided python script `sample_test.py` to test the `render_depth.so`.   
 	```shell
@@ -83,9 +83,10 @@ Make sure no errors happened in this compiling process and the file `render_dept
 
 ### Train and Test
 
-	Just run the shell script `./run_experiment.sh` directly, or you can modify several input args before running.
+1. Just run the shell script `./run_experiment.sh` directly, or you can modify several input args before running.
 
-	To visualize the training process, you can use the tensorboard tool:  
+    To visualize the training process, you can use the tensorboard tool:  
+	
 	```shell
 	cd ./output/tensorboard
 	tensorboard --logdir=./ --port=6710
