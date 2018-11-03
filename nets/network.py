@@ -24,9 +24,9 @@ class FaceRecNet:
         self.im_size = im_size
         self.weight_decay = weight_decay
         self.ndim_tex = 10
-        self.lambda_pose = 1e-3
-        self.lambda_geo = 1e-6
-        self.lambda_sh = 1.0  # unused
+        self.lambda_pose = 1.0  # 1e-3
+        self.lambda_geo = 1e-6   #
+        self.lambda_sh = 1e-3  # 1.0 in paper
         self.lambda_f = 100  # 5e-2 in paper
         self.lambda_sm = 1e-5  # 1.0 in paper
         self.gray_mean = 126.064
@@ -89,10 +89,10 @@ class FaceRecNet:
             # Rendering Layer
             self.depth_rendering_layer()
             if is_training:
-                self.image_summaries.update({'pncc_map': self.pncc_batch,
+                self.image_summaries.update({'pncc_map': self.pncc_batch * 255.0,
                                             'mask_im': self.maskimg_batch,
-                                            'normal_map': self.normal_batch,
-                                            'coarse_depth': self.coarse_depth_map})
+                                            'normal_map': (self.normal_batch + 1.0) / 2.0 * 255.0,
+                                            'coarse_depth': self.depth_to_im(self.coarse_depth_map)})
             # FineNet
             self.build_fine_net()
             if is_training:
@@ -132,7 +132,7 @@ class FaceRecNet:
                 net_pool = tf.reduce_mean(net_conv, [1, 2], keep_dims=True, name='pooling') # Global average pooling. 13x13
                 self.pred_params = slim.fully_connected(net_pool, self.ndim,
                                      weights_initializer=tf.random_normal_initializer(mean=0.0, stddev=0.001),
-                                     activation_fn=None, scope='fc')
+                                     normalizer_fn=None, activation_fn=None, scope='fc')
 
 
     def vertices_transform(self, pred_params):
@@ -180,38 +180,40 @@ class FaceRecNet:
         tf_depth, tf_tex, tf_normal, tf_tri_ind = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=tf_image)
         
         # 1. pncc result
-        pncc_batch = tf.clip_by_value(tf_tex, 0.0, 1.0)
+        pncc_batch = tf.clip_by_value(tf_tex, 1e-6, 1.0)
 
         # 2. normal map result
         flip_ind = tf_normal[:, :, :, 2] < 0
         tf_normal = tf.where(tf.tile(tf.expand_dims(flip_ind, axis=3), [1, 1, 1, 3]), -1.0 * tf_normal, tf_normal)  # flip the opposite normal vectors
         mag = tf.reduce_sum(tf.square(tf_normal), axis=-1)
-        mag = tf.where(tf.not_equal(mag, 0.0), mag, tf.zeros_like(mag) + 1.0)  # mag[mag==0.0] = 1.0
-        normalimg_batch = tf_normal / tf.expand_dims(tf.sqrt(mag), axis=3)  # normalization with magnitude, range (-1, 1)
-        # mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
-        # normal_map = tf.maximum(tf_normal, 0.0)  # if v <0, v == 0
-        # normal_map = normal_map / tf.tile(tf.expand_dims(tf.sqrt(mag), axis=3), [1, 1, 1, 3])  # normalize vertices normals
-        # normal_batch = tf.map_fn(lambda x: (x - tf.reduce_min(x, axis=[0, 1])) /
-        #                                    (tf.reduce_max(x, axis=[0, 1]) - tf.reduce_min(x, axis=[0, 1])), normal_map, dtype=tf.float32)
-        # normalimg_batch = tf.map_fn(lambda x: tf.maximum(x, 0.0) * 255.0, normal_batch, dtype=tf.float32)
+        mag = tf.where(mag > 1e-6, mag, tf.zeros_like(mag) + 1.0)  # mag[mag==0.0] = 1.0
+        normalimg_batch = tf_normal / tf.expand_dims(tf.sqrt(mag) + 1e-6, axis=3)  # normalization with magnitude, range (-1, 1)
 
         # 3. masked image result
-        mask = tf.clip_by_value(tf_depth, 0.0, 1.0)  # (B, H, W, 1)
+        mask = tf.clip_by_value(tf_depth, 1e-6, 1.0)  # (B, H, W, 1)
         maskimg_batch = mask * self.im_gray
 
-        # 4. depth image result
-        tf_depth = tf.squeeze(tf_depth, axis=3)  # (B, H, W)
-        def foreground_normalization(depth_map):
-            foreground = tf.gather_nd(depth_map, tf.where(depth_map > 0.0))
-            return (depth_map - tf.reduce_min(foreground)) / (tf.reduce_max(foreground) - tf.reduce_min(foreground))
-        depth_norm = tf.map_fn(foreground_normalization, tf_depth, dtype=tf.float32)
-
-        # foreground = tf.map_fn(lambda x: tf.gather_nd(x, tf.where(x > 0.0)), tf_depth, dtype=tf.float32)
-        # depth_norm = tf.map_fn(lambda x: (x[0] - tf.reduce_min(x[1])) / (tf.reduce_max(x[1]) - tf.reduce_min(x[1])), (tf_depth, foreground), dtype=tf.float32)
-        depthimg_batch = tf.maximum(depth_norm, 0.0)
-        depthimg_batch = tf.expand_dims(depthimg_batch, axis=3)  # (B, H, W, 1)
+        # # 4. depth image result
+        depthimg_batch = tf.maximum(tf_depth, 1e-6)
 
         return pncc_batch, normalimg_batch, maskimg_batch, depthimg_batch
+
+
+    def depth_to_im(self, depth_map):
+        '''Map depth data to image for visualization
+
+        :param depth_map:
+        :return:
+        '''
+        depth_map = tf.squeeze(depth_map, axis=3)  # (B, H, W)
+        def foreground_normalization(depth_map):
+            foreground = tf.gather_nd(depth_map, tf.where(depth_map > 0.0))
+            return (depth_map - tf.reduce_min(foreground)) / (tf.reduce_max(foreground) - tf.reduce_min(foreground) + 1e-6)
+        depth_norm = tf.map_fn(foreground_normalization, depth_map, dtype=tf.float32)  # -a, 1
+        depth_img = tf.maximum(depth_norm, 1e-6) * 255.0 # 0-1
+
+        depth_img = tf.expand_dims(depth_img, axis=3)  # (B, H, W, 1)
+        return depth_img
 
 
     def projection_equation(self, f, R, vertex, t3d):
@@ -307,7 +309,7 @@ class FaceRecNet:
             net_conv = slim.conv2d(net_conv, 50, [1, 1], scope='conv4_1')
             net_conv = slim.conv2d(net_conv, 50, [1, 1], scope='conv4_2')
             net_conv = slim.conv2d(net_conv, 10, [1, 1], scope='conv4_3')
-            self.pred_depth_map = slim.conv2d(net_conv, 1, [1, 1], scope='pred_depth_map')
+            self.pred_depth_map = slim.conv2d(net_conv, 1, [1, 1], activation_fn=None, normalizer_fn=None, scope='pred_depth_map')
 
         return self.pred_depth_map
 
@@ -333,13 +335,14 @@ class FaceRecNet:
                                                          scope='geometry_loss')
             self.losses['geometry_loss'] = loss_geometry
 
-            # # Shape from Shading (SfS) loss
-            # intensity_recover = self.get_spherical_harmonics_model()
-            # loss_sh = tf.losses.mean_squared_error(self.im_gray, intensity_recover, scope='spherical_harmonics_loss')
-            # self.losses['spherical_harmonics_loss'] = loss_sh
+            # Shape from Shading (SfS) loss
+            intensity_recover = self.get_spherical_harmonics_model()
+            loss_sh = tf.losses.mean_squared_error(self.im_gray, intensity_recover, scope='spherical_harmonics_loss')
+            self.losses['spherical_harmonics_loss'] = loss_sh
 
             # fidelity loss of depth map
             loss_fidelity = tf.losses.mean_squared_error(self.coarse_depth_map, self.pred_depth_map, scope='fidelity_loss')
+            # loss_fidelity = tf.reduce_mean(tf.square(self.coarse_depth_map - self.pred_depth_map), name='fidelity_loss')
             self.losses['fidelity_loss'] = loss_fidelity
 
             # smoothness loss of depth map
@@ -348,9 +351,8 @@ class FaceRecNet:
             self.losses['smoothness_loss'] = loss_smooth
 
             # final loss function
-            # loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
+            loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_sh * loss_sh + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
             # loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry + self.lambda_f * loss_fidelity + self.lambda_sm * loss_smooth
-            loss = self.lambda_pose * loss_pose + self.lambda_geo * loss_geometry
             self.losses['total_loss'] = loss
 
             self.scalar_summaries.update(self.losses)
@@ -386,11 +388,13 @@ class FaceRecNet:
         # call TF rendering layer
         _, tf_abedo, tf_normal, _ = render_depth(ver=tf_vertex, tri=tf_triangles, texture=tf_texture, image=tf_image)
 
-        abedos_image = tf.reduce_mean(tf.maximum(tf_abedo, 0.0), axis=-1, keep_dims=True)  # (B, H, W, 1)
-        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1) + 1.0  # here we add 1 to avoid meaningless division for normalization
-        normal_map = tf.maximum(tf_normal, 0.0)  # if v <0, v == 0
-        normal_map = normal_map / tf.tile(tf.expand_dims(tf.sqrt(mag), axis=3), [1, 1, 1, 3])  # normalize vertices normals
+        abedos_image = tf.reduce_mean(tf.maximum(tf_abedo, 1e-6), axis=-1, keep_dims=True)  # (B, H, W, 1)
 
+        flip_ind = tf_normal[:, :, :, 2] < 0
+        tf_normal = tf.where(tf.tile(tf.expand_dims(flip_ind, axis=3), [1, 1, 1, 3]), -1.0 * tf_normal, tf_normal)  # flip the opposite normal vectors
+        mag = tf.reduce_sum(tf.square(tf_normal), axis=-1)
+        mag = tf.where(mag > 1e-6, mag, tf.zeros_like(mag) + 1.0)  # mag[mag==0.0] = 1.0
+        normal_map = tf_normal / tf.expand_dims(tf.sqrt(mag) + 1e-6, axis=3)  # normalization with magnitude, range (-1, 1)
         return abedos_image, normal_map
 
 
@@ -402,8 +406,10 @@ class FaceRecNet:
         Yz0 = tf.transpose(normal_map, [1, 2, 3, 0], name='homo_normals')  # (H, W, 3, B)  from z0
         # here we use the least square estimation (LSE) with data of batchsize to get recovered lighting:
         # LSE equation: l = (Y x Y_T).inv() x Y x (I./mu_tex)_T
-        # TODO: ERROR occured here due to invertible nec.
-        Yz0_nec_inv = tf.matrix_inverse(tf.matmul(Yz0, tf.transpose(Yz0, [0, 1, 3, 2])))  # (H, W, 3, 3)
+        # TODO: ERROR occured here due to invertible nec. Instead, we use moore-penrose inverse.
+        # Yz0_nec_inv = tf.matrix_inverse(tf.matmul(Yz0, tf.transpose(Yz0, [0, 1, 3, 2])))  # (H, W, 3, 3)
+        Yz0_nec = tf.matmul(Yz0, tf.transpose(Yz0, [0, 1, 3, 2]))
+        Yz0_nec_inv = tf.py_func(np.linalg.pinv, [Yz0_nec], tf.float32)
         I = tf.transpose(self.im_gray, [1, 2, 3, 0])  # (H, W, 1, B)
         lighting_lse = tf.matmul(tf.matmul(Yz0_nec_inv, Yz0),
                                  tf.transpose(I / (abedo_image + 1.0), [0, 1, 3, 2]))  # (H, W, 3, 1)
@@ -453,8 +459,8 @@ class FaceRecNet:
                 val_summaries.append(tf.summary.scalar(key, var))
             for key, var in self.image_summaries.items():
                 val_summaries.append(tf.summary.image(key, var))
-            for key, var in self.histogram_summaries.items():
-                tf.summary.histogram(var.op.name, var)
+            # for key, var in self.histogram_summaries.items():
+            #     tf.summary.histogram(var.op.name, var)
 
         summary_op = tf.summary.merge_all()
         summary_op_val = tf.summary.merge(val_summaries)

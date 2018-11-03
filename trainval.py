@@ -54,12 +54,10 @@ def train_model(sess):
 
         # add summaries
         summary_op, summary_op_val = face_recnet.add_summaries()
-        # optimizer = tf.train.GradientDescentOptimizer(learning_rate=p.base_lr)
+
         # construct optimizer
         optimizer = tf.train.AdamOptimizer(learning_rate=p.base_lr, name='Adam')
         train_op = optimizer.minimize(losses['total_loss'])
-        # gvs = optimizer.compute_gradients(loss)
-        # train_op = optimizer.apply_gradients(gvs)
 
         # prepare saver and writer
         tf_saver = tf.train.Saver(max_to_keep=100000)
@@ -85,19 +83,12 @@ def train_model(sess):
             # train step
             feed_dict = {grayimg_placeholder: train_images,
                          labels_placeholder: train_labels}
-            # Only train the CoarseNet due the unresolved bug in rendering layer
-            pose_loss, geometry_loss, total_loss, summary, _ = sess.run(
+            pose_loss, geometry_loss, sh_loss, fidelity_loss, smoothness_loss, total_loss, summary, _ = sess.run(
                 [losses['pose_loss'], losses['geometry_loss'],
-                 # losses['fidelity_loss'], losses['smoothness_loss'],
+                 losses['spherical_harmonics_loss'], losses['fidelity_loss'], losses['smoothness_loss'],
                  losses['total_loss'],
                  summary_op, train_op],
                 feed_dict=feed_dict)
-            # pose_loss, geometry_loss, fidelity_loss, smoothness_loss, total_loss, summary, _ = sess.run(
-            #     [losses['pose_loss'], losses['geometry_loss'],
-            #      losses['fidelity_loss'], losses['smoothness_loss'],
-            #      losses['total_loss'],
-            #      summary_op, train_op],
-            #     feed_dict=feed_dict)
             # add train summaries
             tf_train_writer.add_summary(summary, float(iter))
 
@@ -115,10 +106,10 @@ def train_model(sess):
                 print('--------------------------- iter: %d / %d, total loss: %.6f ---------------------------' % (
                 iter, p.max_iters, total_loss))
                 print(' --- loss_pose: %.6f,                --- loss_geometry: %.6f\n'
-                      # ' --- loss_fidelity: %.6f             --- loss_smoothness: %.6f\n'
+                      ' --- loss_spherical_harmonics: %.6f, --- loss_fidelity: %.6f, --- loss_smoothness: %.6f\n'
                       ' --- loss_total (train/val): %.6f / (%.6f)'
                       % (pose_loss, geometry_loss,
-                         # fidelity_loss, smoothness_loss,
+                         sh_loss, fidelity_loss, smoothness_loss,
                          total_loss, total_loss_val))
                 print(' --- speed: {:.3f}s / iter'.format(timer.average_time))
 
