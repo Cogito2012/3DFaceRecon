@@ -103,9 +103,9 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 ### Citation
 If you find this implementation or the analysis conducted in our report helpful, please consider citing:
 
-    @article{Richardson_CVPR2017,
-        Author = {E. Richardson and M. Sela and R. Or-El and R. Kimmel},
-        Title = {Learning Detailed Face Reconstruction from a Single Image},
-        booktitle={2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
-        Year = {2017}
-    }
+	@article{Richardson_CVPR2017,
+	    Author = {E. Richardson and M. Sela and R. Or-El and R. Kimmel},
+	    Title = {Learning Detailed Face Reconstruction from a Single Image},
+	    booktitle={2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+	    Year = {2017}
+	}
