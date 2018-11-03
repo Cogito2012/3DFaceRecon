@@ -1,5 +1,5 @@
 .idea/
-*.png
+./*.png
 
 3dmm/*
 data/vggface
@@ -29,4 +29,4 @@ zbuffer_render/
 multi_rendering_layer/*
 w_rendering_layer/*
 
-
+samples/*
