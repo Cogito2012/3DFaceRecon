@@ -9,7 +9,7 @@ import configparser
 
 # Register ops for compilation here
 ###TODO: Wentao added RenderDepth
-OP_NAMES = ['render_depth','backward_warp', 'downsample', 'correlation', 'forward_warp']
+OP_NAMES = ['render_depth']
 
 
 cwd = os.getcwd()
@@ -81,15 +81,6 @@ def render_depth(ver,tri,texture, image, **kwargs):
     return _render_depth_module.render_depth(ver,tri,texture, image,**kwargs)
 
 
-def correlation(first, second, **kwargs):
-    return _correlation_module.correlation(first, second, **kwargs)[0]
-
-
-backward_warp = _backward_warp_module.backward_warp
-downsample = _downsample_module.downsample
-forward_warp = _forward_warp_module.forward_warp
-
-
 # Register op gradients
 ###TODO: Wentao added the backward function of RenderDepth
 @ops.RegisterGradient("RenderDepth")
@@ -98,43 +89,7 @@ def _RenderDepthGrad(op, depth_grad, texture_image_grad, normal_grad, tri_ind_gr
     grad0 = _render_depth_module.render_depth_grad(
         depth_grad, op.inputs[0], op.inputs[1], ## depth_grad, vertex, tri
         op.outputs[0],op.outputs[3],op.inputs[3]  ## depth, tri_ind
-        # nver=op.get_attr('nver'),
-        # ntri=op.get_attr('ntri'),
-        # width = op.get_attr('width'),
-        # height = op.get_attr('height')
     )
 
     ###TODO: tri has no gradients
     return [grad0,None,None,None]
-
-
-@ops.RegisterGradient("BackwardWarp")
-def _BackwardWarpGrad(op, grad):
-    grad0 = _backward_warp_module.backward_warp_grad(
-        grad, op.inputs[0], op.inputs[1])
-    return [None, grad0]
-
-
-@ops.RegisterGradient("ForwardWarp")
-def _ForwardWarpGrad(op, grad):
-    grad0 = _forward_warp_module.forward_warp_grad(
-        grad, op.inputs[0])
-    return [grad0]
-
-
-@ops.RegisterGradient("Correlation")
-def _CorrelationGrad(op, in_grad, in_grad1, in_grad2):
-    grad0, grad1 = _correlation_module.correlation_grad(
-        in_grad, op.inputs[0], op.inputs[1],
-        op.outputs[1], op.outputs[2],
-        kernel_size=op.get_attr('kernel_size'),
-        max_displacement=op.get_attr('max_displacement'),
-        pad=op.get_attr('pad'),
-        stride_1=op.get_attr('stride_1'),
-        stride_2=op.get_attr('stride_2'))
-    return [grad0, grad1]
-
-
-ops.NotDifferentiable("Downsample")
-
-
