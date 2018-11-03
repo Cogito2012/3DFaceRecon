@@ -99,8 +99,8 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 
 ### Disclaimer
 
-    > * Currently, this repo has not been well improved to completely get exactly the same results of the paper.
-    > * Parts of the C++ codes related to the zbuffer rendering are referenced from [3DDFA](http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/main.htm).
+> * Currently, this repo has not been well improved to completely get exactly the same results of the paper.
+> * Parts of the C++ codes related to the zbuffer rendering are referenced from [3DDFA](http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/main.htm).
     
 
 ### Citation
