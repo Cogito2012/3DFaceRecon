@@ -4,8 +4,6 @@
 
 This repo is the re-implementation work of the paper [Learning Detailed Face Reconstruction from a Single Image (CVPR2017)](http://openaccess.thecvf.com/content_cvpr_2017/papers/Richardson_Learning_Detailed_Face_CVPR_2017_paper.pdf).
 
-**Note**: Currently, this repo has not been well improved to completely get exactly the same results of the paper.
-
 ![results](./paper_info/result_im.png)
 ![framework](./paper_info/framework.png)
 
@@ -29,7 +27,7 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 
 2. Compile the Zbuffer Lib within the folder `./prepare_data/ZBuffer` by running the script: `compile.m`
 
-    Note that you can also ignore this step with Windows platform.
+    **Note**: you can also ignore this step with Windows platform.
 
 3. Prepare 3DMM facial model.    
 
@@ -83,7 +81,6 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 
 ### Train and Test
 
-
 1. Download the pretrained ImageNet model files, i.e., `resnet_v1_101.ckpt` and `vgg_16.ckpt`.
 
 	```shell
@@ -100,8 +97,14 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 	tensorboard --logdir=./ --port=6710
 	```
 
+### Disclaimer
+
+    > * Currently, this repo has not been well improved to completely get exactly the same results of the paper.
+    > * Parts of the C++ codes related to the zbuffer rendering are referenced from [3DDFA](http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/main.htm).
+    
+
 ### Citation
-If you find this implementation or the analysis conducted in our report helpful, please consider citing:
+If you find this implementation helpful to your research paper, please consider citing:
 
 	@article{Richardson_CVPR2017,
 	    Author = {E. Richardson and M. Sela and R. Or-El and R. Kimmel},
