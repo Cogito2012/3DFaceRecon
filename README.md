@@ -83,7 +83,15 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 
 ### Train and Test
 
-1. Just run the shell script `./run_experiment.sh` directly, or you can modify several input args before running.
+
+1. Download the pretrained ImageNet model files, i.e., `resnet_v1_101.ckpt` and `vgg_16.ckpt`.
+
+```shell
+cd ./pretrained
+sh download_imagenet_models.sh
+```
+
+2. For training, just run the shell script `./run_experiment.sh` directly, or you can modify several input args before running.
 
     To visualize the training process, you can use the tensorboard tool:  
 	
