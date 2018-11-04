@@ -2,7 +2,7 @@ function [img, tri_ind] = Mex_ZBuffer(projectedVertex, tri, texture, img_src)
     [height, width, nChannels] = size(img_src);
     nver = size(projectedVertex,2);
     ntri = size(tri,2);
-    [img, tri_ind] = Mex_ZBufferC(double(projectedVertex), double(tri), double(texture), img_src, nver, ntri, width, height, nChannels);
+    [img, tri_ind] = ZBufferC(double(projectedVertex), double(tri), double(texture), img_src, nver, ntri, width, height, nChannels);
 end
 %% Matlab Ver.
 % function [img] = ZBuffer(s2d, vertex, tri, texture, img_src)

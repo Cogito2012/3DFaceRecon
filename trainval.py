@@ -35,7 +35,7 @@ def train_model(sess):
         tf.set_random_seed(12345)
 
         grayimg_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, p.image_size, p.image_size, 1], name='im_gray')
-        labels_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, 1, 1, ndim_params], name='im_gray')
+        labels_placeholder = tf.placeholder(dtype=tf.float32, shape=[p.batch_size, 1, 1, ndim_params], name='params_label')
         # initialize Face Reconstruction Model
         face_recnet = FaceRecNet(
             im_gray=grayimg_placeholder,

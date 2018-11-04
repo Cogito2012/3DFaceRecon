@@ -24,8 +24,8 @@ class FaceRecNet:
         self.im_size = im_size
         self.weight_decay = weight_decay
         self.ndim_tex = 10
-        self.lambda_pose = 1.0  # 1e-3
-        self.lambda_geo = 1e-6   #
+        self.lambda_pose = 1e-3  # 1.0
+        self.lambda_geo = 1e-6   # 1.0
         self.lambda_sh = 1e-3  # 1.0 in paper
         self.lambda_f = 100  # 5e-2 in paper
         self.lambda_sm = 1e-5  # 1.0 in paper
@@ -130,9 +130,11 @@ class FaceRecNet:
                                                   global_pool=False, include_root_block=False, reuse=False)
                 net_conv = slim.conv2d(net_conv, self.ndim, [3, 3], scope='conv_out')
                 net_pool = tf.reduce_mean(net_conv, [1, 2], keep_dims=True, name='pooling') # Global average pooling. 13x13
-                self.pred_params = slim.fully_connected(net_pool, self.ndim,
+                pred_params = slim.fully_connected(net_pool, self.ndim,
                                      weights_initializer=tf.random_normal_initializer(mean=0.0, stddev=0.001),
                                      normalizer_fn=None, activation_fn=None, scope='fc')
+                self.pred_params = self.set_constraints(pred_params)
+
 
 
     def vertices_transform(self, pred_params):
@@ -197,6 +199,23 @@ class FaceRecNet:
         depthimg_batch = tf.maximum(tf_depth, 1e-6)
 
         return pncc_batch, normalimg_batch, maskimg_batch, depthimg_batch
+
+
+    def set_constraints(self, pred_params):
+        '''Set constraints for values of pred_params
+
+        :param pred_params:
+        :return:
+        '''
+        pred_params = tf.nn.sigmoid(pred_params)  # 0 - 1
+        self.pred_params = tf.concat([pred_params[:, :, :, 0:3] * 3.0 - 1.5,  # [-1.5, 1.5]
+                                      pred_params[:, :, :, 3:5] * self.im_size,  # [0, 200]
+                                      tf.expand_dims(pred_params[:, :, :, 5] * 0.0, axis=3),  # 0, we do not use this param
+                                      tf.expand_dims(pred_params[:, :, :, 6] * 1e-3, axis=3),
+                                      pred_params[:, :, :, self.ndim_pose:self.ndim_pose + self.ndim_shape] * 1e4,
+                                      pred_params[:, :, :, self.ndim_pose + self.ndim_shape:self.ndim] * 3.0 - 1.5],
+                                     axis=3)
+        return self.pred_params
 
 
     def depth_to_im(self, depth_map):

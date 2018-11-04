@@ -15,11 +15,11 @@ ProjectVertex = f * R * vertex + repmat(t3d, 1, size(vertex, 2));
 [height, width, nChannels] = size(img);
 code_map = zeros(height, width, nChannels);
 masked_img = zeros(height, width, nChannels);
-[code_map, tri_ind] = Mex_ZBuffer(double(ProjectVertex), tri, double(vertex_code), code_map);
+[code_map, tri_ind] = Mex_ZBuffer(double(ProjectVertex), double(tri), double(vertex_code), code_map);
 code_map = InvertImage(code_map);
 
 mask = flipud(tri_ind);
 mask(find(mask > 0)) = 1;
-masked_img = uint8(mask) .* img;
+masked_img = uint8(repmat(mask, [1, 1, nChannels])) .* img;
 end
 

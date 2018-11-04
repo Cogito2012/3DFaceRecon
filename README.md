@@ -12,7 +12,7 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 > * python == 3.5.x (with opencv-python, scipy, etc. Anaconda==3.4.x is recommended.)
 > * TensorFlow == 1.2.0 (with CUDA8.0 and cudnn5.1).
 > * gcc == 4.8.x (for compiling rendering layer).
-> * Data preparation on Windows and implementation codes support only the Linux platform currently.
+> * Currently, the codes are tested only on the Linux platform with environment above.
 
 
 ### Data Preparation
@@ -27,7 +27,9 @@ This repo is the re-implementation work of the paper [Learning Detailed Face Rec
 
 2. Compile the Zbuffer Lib within the folder `./prepare_data/ZBuffer` by running the script: `compile.m`
 
-    **Note**: you can also ignore this step with Windows platform.
+    **Note**: you may need to setup mex compiler and modify the directories of opencv accordingly if errors occured.
+
+    You can also run the MATLAB script `./test_zbuffer.m` to test the generated lib file, i.e., `ZBufferC.mexa64`.
 
 3. Prepare 3DMM facial model.    
 

@@ -12,6 +12,7 @@ nets/__pycache__
 output/
 
 pretrained/*.ckpt
+prepare_data/ZBuffer/*.mexa64
 
 rendering_layer/*.pyc
 rendering_layer/*.png
